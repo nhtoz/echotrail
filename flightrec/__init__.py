@@ -1,0 +1,8 @@
+"""flightrec — flight recorder & forensics for AI agents (MVP)."""
+
+from .recorder import Recorder, Session
+from .store import TraceStore, VerificationResult
+from .scan import scan_text, scan_payload
+
+__version__ = "0.1.0"
+__all__ = ["Recorder", "Session", "TraceStore", "VerificationResult", "scan_text", "scan_payload"]
