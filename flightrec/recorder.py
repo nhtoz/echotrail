@@ -26,7 +26,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Callable, Iterator
 
-from .scan import scan_payload
+from .scan import scan_payload, risk_score
 from .store import TraceStore
 
 
@@ -65,6 +65,7 @@ class Session:
         findings = scan_payload(payload)
         if findings:
             payload["_flags"] = findings
+            payload["_risk"] = risk_score(findings)
         self.store.append(self.session_id, event_type, payload)
 
     # -- tool recording ---------------------------------------------------

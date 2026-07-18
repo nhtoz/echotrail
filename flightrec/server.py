@@ -83,6 +83,10 @@ PAGE = """<!doctype html>
   .eseq { color:var(--dim); width:44px; } .ets { color:var(--dim); font-size:12px; margin-left:auto; }
   .flag { background:#2d1214; color:var(--bad); border:1px solid var(--bad); border-radius:4px;
           padding:1px 8px; font-size:11px; margin-left:6px; }
+  .flag.sev-medium { background:#2b2111; color:var(--warn); border-color:var(--warn); }
+  .flag.sev-low { background:#1c2416; color:#9ccc65; border-color:#9ccc65; }
+  .risk { display:inline-block; padding:1px 8px; border-radius:10px; font-size:11px;
+          background:#2d1214; color:var(--bad); border:1px solid var(--bad); }
   .ebody { display:none; padding:0 14px 12px; }
   .event.open .ebody { display:block; }
   pre { background:var(--bg); border:1px solid var(--line); border-radius:6px; padding:10px;
@@ -108,6 +112,7 @@ async function loadSessions() {
       <div class="name">${esc(s.name || s.session_id)}</div>
       <div class="meta">${new Date(s.started*1000).toLocaleString()} · ${s.events} events ·
         <span class="badge ${s.verified ? 'ok':'bad'}">${s.verified ? 'integrity ok':'TAMPERED'}</span>
+        ${s.risk ? `<span class="risk">risk ${s.risk}</span>` : ''}
       </div>
     </div>`).join('') || '<div class="empty">No sessions yet.</div>';
 }
@@ -121,7 +126,10 @@ async function openSession(id) {
     ? `<span class="badge ok">chain verified — ${v.events} events intact</span>`
     : `<span class="badge bad">TAMPER DETECTED at seq ${v.first_bad_seq}: ${esc(v.reason)}</span>`;
   const flagged = data.events.filter(e => e.payload && e.payload._flags).length;
-  const fnote = flagged ? ` <span class="badge bad">${flagged} flagged event(s)</span>` : '';
+  const totalRisk = data.events.reduce((a,e) => a + ((e.payload && e.payload._risk) || 0), 0);
+  const fnote = flagged
+    ? ` <span class="badge bad">${flagged} flagged event(s)</span> <span class="risk">session risk ${totalRisk}</span>`
+    : '';
   document.getElementById('main').innerHTML =
     `<div style="margin-bottom:16px">${vbadge}${fnote}</div>` +
     data.events.map(renderEvent).join('');
@@ -129,7 +137,8 @@ async function openSession(id) {
 
 function renderEvent(e) {
   const flags = (e.payload && e.payload._flags) || [];
-  const flagHtml = flags.map(f => `<span class="flag">&#9873; ${esc(f.label)}</span>`).join('');
+  const flagHtml = flags.map(f =>
+    `<span class="flag sev-${esc(f.severity || 'high')}">&#9873; ${esc(f.label)} · ${esc(f.severity || '')} ${f.weight ? '+'+f.weight : ''}</span>`).join('');
   const ts = new Date(e.ts*1000).toLocaleTimeString();
   let body = JSON.stringify(e.payload ?? {name:e.name, metadata:e.metadata}, null, 2);
   body = esc(body);

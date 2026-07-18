@@ -94,6 +94,10 @@ class TraceStore:
                     "started": head["ts"],
                     "events": len(events),
                     "verified": self.verify(p.stem).ok,
+                    "risk": sum(
+                        e.get("payload", {}).get("_risk", 0) for e in events[1:]
+                        if isinstance(e.get("payload"), dict)
+                    ),
                 }
             )
         return out
