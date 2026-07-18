@@ -136,3 +136,35 @@ def test_evidence_bundle_roundtrip(tmp_path):
 
     bad = subprocess.run([sys.executable, str(extract / "verify.py")], capture_output=True, text=True)
     assert bad.returncode == 1 and "FAIL" in bad.stdout
+
+
+def test_anchor_detects_rewritten_history(tmp_path):
+    from flightrec.anchor import create_anchor, check_anchors
+
+    store = TraceStore(tmp_path)
+    sid = store.create_session("t")
+    store.append(sid, "tool_call", {"tool": "issue_refund", "amount": 50})
+
+    # anchor with an injected fake TSA (returns dummy token bytes)
+    rec = create_anchor(store, sid, _timestamper=lambda data: b"FAKE-TSR-" + data[:8])
+    assert rec["method"] == "rfc3161" and rec["anchored_seq"] == 1
+
+    assert all(a["ok"] for a in check_anchors(store, sid))
+
+    # rewrite history wholesale: forge the event AND recompute the chain
+    import hashlib
+    from flightrec.store import GENESIS, _canonical
+    events = list(store.read(sid))
+    events[1]["payload"]["amount"] = 5000
+    prev = GENESIS
+    for e in events:
+        e["prev_hash"] = prev
+        body = {k: v for k, v in e.items() if k != "hash"}
+        e["hash"] = hashlib.sha256(_canonical(body)).hexdigest()
+        prev = e["hash"]
+    (tmp_path / f"{sid}.jsonl").write_text(
+        "\n".join(json.dumps(e, ensure_ascii=False) for e in events) + "\n")
+
+    # internal chain now verifies (attacker rebuilt it) — but the anchor catches the rewrite
+    assert store.verify(sid).ok
+    assert not any(a["ok"] for a in check_anchors(store, sid))

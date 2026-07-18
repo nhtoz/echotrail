@@ -32,6 +32,8 @@ def cmd_list(store: TraceStore) -> int:
 
 
 def cmd_verify(store: TraceStore, session_id: str | None, verify_all: bool) -> int:
+    from .anchor import check_anchors
+
     ids = [s["session_id"] for s in store.sessions()] if verify_all else [session_id]
     failed = 0
     for sid in ids:
@@ -41,6 +43,12 @@ def cmd_verify(store: TraceStore, session_id: str | None, verify_all: bool) -> i
         else:
             failed += 1
             print(f"{sid}: TAMPER DETECTED at seq {v.first_bad_seq}: {v.reason}")
+        for a in check_anchors(store, sid):
+            if a["ok"]:
+                print(f"  anchor @seq {a['anchored_seq']} ({a['method']}, {a['created_at']}): OK")
+            else:
+                failed += 1
+                print(f"  anchor @seq {a['anchored_seq']} ({a['method']}, {a['created_at']}): MISMATCH — {a['reason']}")
     return 1 if failed else 0
 
 
@@ -63,6 +71,10 @@ def main() -> None:
     p_export.add_argument("session_id")
     p_export.add_argument("-o", "--out", default=".", help="output directory (default .)")
 
+    p_anchor = sub.add_parser("anchor", help="anchor chain head to an external RFC 3161 timestamp authority")
+    p_anchor.add_argument("session_id")
+    p_anchor.add_argument("--tsa", default=None, help="TSA URL (default freetsa.org)")
+
     args = parser.parse_args()
     store = TraceStore(args.root)
 
@@ -72,6 +84,15 @@ def main() -> None:
         if not args.all and not args.session_id:
             parser.error("provide SESSION_ID or --all")
         sys.exit(cmd_verify(store, args.session_id, args.all))
+    if args.cmd == "anchor":
+        from .anchor import DEFAULT_TSA, create_anchor
+        rec = create_anchor(store, args.session_id, tsa_url=args.tsa or DEFAULT_TSA)
+        print(f"anchored seq {rec['anchored_seq']} hash {rec['anchored_hash'][:16]}… via {rec['method']}")
+        if rec["method"] == "local":
+            print("note: install 'flightrec[anchor]' for RFC 3161 external timestamping;")
+            print(f"      until then, publish this hash somewhere public: {rec['anchored_hash']}")
+        print(f"anchor record: {rec['_path']}")
+        sys.exit(0)
     if args.cmd == "export":
         from .export import build_evidence_bundle
         path = build_evidence_bundle(store, args.session_id, args.out)
