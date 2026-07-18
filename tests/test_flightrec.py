@@ -105,3 +105,34 @@ def test_cli_verify_exit_codes(tmp_path):
 
     bad = run("verify", "--all")
     assert bad.returncode == 1 and "TAMPER" in bad.stdout
+
+
+def test_evidence_bundle_roundtrip(tmp_path):
+    import subprocess
+    import zipfile
+    from flightrec.export import build_evidence_bundle
+
+    rec = Recorder(root=tmp_path / "traces")
+    with rec.session("evidence test") as s:
+        s.log("tool_call", tool="send_email", to="x@example.com")
+
+    zip_path = build_evidence_bundle(rec.store, s.session_id, tmp_path / "out")
+    assert zip_path.exists()
+
+    extract = tmp_path / "extracted"
+    with zipfile.ZipFile(zip_path) as z:
+        z.extractall(extract)
+
+    # standalone verifier passes on intact evidence
+    ok = subprocess.run([sys.executable, str(extract / "verify.py")], capture_output=True, text=True)
+    assert ok.returncode == 0 and "EVIDENCE VERIFIED" in ok.stdout
+
+    # forging the extracted evidence makes the standalone verifier fail
+    events_file = extract / "events.jsonl"
+    lines = events_file.read_text().splitlines()
+    ev = json.loads(lines[1]); ev["payload"]["to"] = "attacker@evil.example"
+    lines[1] = json.dumps(ev, ensure_ascii=False)
+    events_file.write_text("\n".join(lines) + "\n")
+
+    bad = subprocess.run([sys.executable, str(extract / "verify.py")], capture_output=True, text=True)
+    assert bad.returncode == 1 and "FAIL" in bad.stdout

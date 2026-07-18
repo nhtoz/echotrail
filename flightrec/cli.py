@@ -59,6 +59,10 @@ def main() -> None:
     p_serve.add_argument("--port", type=int, default=8377)
     p_serve.add_argument("--host", default="127.0.0.1")
 
+    p_export = sub.add_parser("export", help="export a session as a self-verifying evidence zip")
+    p_export.add_argument("session_id")
+    p_export.add_argument("-o", "--out", default=".", help="output directory (default .)")
+
     args = parser.parse_args()
     store = TraceStore(args.root)
 
@@ -68,6 +72,12 @@ def main() -> None:
         if not args.all and not args.session_id:
             parser.error("provide SESSION_ID or --all")
         sys.exit(cmd_verify(store, args.session_id, args.all))
+    if args.cmd == "export":
+        from .export import build_evidence_bundle
+        path = build_evidence_bundle(store, args.session_id, args.out)
+        print(f"evidence bundle written: {path}")
+        print("verify offline with:  unzip, then  python verify.py")
+        sys.exit(0)
     if args.cmd == "serve":
         from . import server
         server._store = store
