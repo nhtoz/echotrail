@@ -52,6 +52,20 @@ with rec.session("support-agent run", config={
 
 Streaming responses are relayed chunk-by-chunk to your code while the assembled text is recorded as a single `llm_response`.
 
+### TypeScript / Node (`js/`)
+
+```ts
+import { Recorder } from "flightrec";
+
+const rec = new Recorder("./traces");
+await rec.session("my-agent run", { config: { model: "gpt-x" } }, async (s) => {
+  const client = s.wrapClient(new OpenAI());          // async + streaming recorded
+  const sendEmail = s.recordTool("send_email", async (to: string) => { ... });
+});
+```
+
+Traces are byte-compatible across languages: a session written from Node is verified, replayed, exported, and causally traced by the Python CLI.
+
 ### MCP proxy (0 lines)
 
 Wrap any stdio MCP server in your client's config — Claude Desktop, Claude Code, or any framework:
@@ -135,7 +149,6 @@ pytest tests/   # 19 tests: chain integrity, tamper/forgery detection, causal
 
 ## Roadmap
 
-- TypeScript SDK (npm) for the Node/MCP ecosystem
 - S3/WORM object storage backends and retention policies
 - Chain-of-custody PDF reports for regulators and insurers
 - UI auth (SSO/RBAC), multi-agent responsibility graphs

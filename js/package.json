@@ -1,0 +1,21 @@
+{
+  "name": "flightrec",
+  "version": "0.11.0",
+  "description": "Flight recorder & forensics for AI agents — tamper-evident traces, trace-compatible with the Python package",
+  "type": "module",
+  "main": "./build/src/index.js",
+  "types": "./build/src/index.d.ts",
+  "exports": { ".": "./build/src/index.js" },
+  "files": ["build/src"],
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "build": "tsc",
+    "test": "npm run build && node --test build/test/*.test.js"
+  },
+  "keywords": ["ai-agents", "security", "forensics", "audit-trail", "tamper-evident", "mcp"],
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.5.0"
+  }
+}
