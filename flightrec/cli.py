@@ -78,6 +78,11 @@ def main() -> None:
     p_incident = sub.add_parser("incident", help="causal trace: injection origin -> downstream actions")
     p_incident.add_argument("session_id")
 
+    p_mcp = sub.add_parser("mcp-proxy", help="record any MCP server's traffic with zero agent code changes")
+    p_mcp.add_argument("--name", default=None, help="session name (default: mcp:<command>)")
+    p_mcp.add_argument("command", nargs=argparse.REMAINDER,
+                       help="the real MCP server command (prefix with --)")
+
     args = parser.parse_args()
     store = TraceStore(args.root)
 
@@ -87,6 +92,10 @@ def main() -> None:
         if not args.all and not args.session_id:
             parser.error("provide SESSION_ID or --all")
         sys.exit(cmd_verify(store, args.session_id, args.all))
+    if args.cmd == "mcp-proxy":
+        from .mcp_proxy import main as mcp_main
+        cmd = args.command[1:] if args.command and args.command[0] == "--" else args.command
+        sys.exit(mcp_main(args.root, args.name, cmd))
     if args.cmd == "incident":
         from .causal import causal_analysis, format_report
         events = list(store.read(args.session_id))

@@ -4,5 +4,5 @@ from .recorder import Recorder, Session
 from .store import TraceStore, VerificationResult
 from .scan import scan_text, scan_payload, risk_score
 
-__version__ = "0.7.0"
+__version__ = "0.8.0"
 __all__ = ["Recorder", "Session", "TraceStore", "VerificationResult", "scan_text", "scan_payload", "risk_score"]
