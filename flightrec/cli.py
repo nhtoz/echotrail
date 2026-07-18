@@ -78,6 +78,10 @@ def main() -> None:
     p_incident = sub.add_parser("incident", help="causal trace: injection origin -> downstream actions")
     p_incident.add_argument("session_id")
 
+    p_otel = sub.add_parser("otel", help="export a session as OpenTelemetry spans (needs flightrec[otel])")
+    p_otel.add_argument("session_id")
+    p_otel.add_argument("--endpoint", default=None, help="OTLP HTTP endpoint (default: console output)")
+
     p_mcp = sub.add_parser("mcp-proxy", help="record any MCP server's traffic with zero agent code changes")
     p_mcp.add_argument("--name", default=None, help="session name (default: mcp:<command>)")
     p_mcp.add_argument("command", nargs=argparse.REMAINDER,
@@ -92,6 +96,15 @@ def main() -> None:
         if not args.all and not args.session_id:
             parser.error("provide SESSION_ID or --all")
         sys.exit(cmd_verify(store, args.session_id, args.all))
+    if args.cmd == "otel":
+        try:
+            from .otel import export_session
+        except ImportError:
+            print("OpenTelemetry SDK not installed — run: pip install 'flightrec[otel]'", file=sys.stderr)
+            sys.exit(2)
+        n = export_session(store, args.session_id, endpoint=args.endpoint)
+        print(f"exported {n} span(s)" + (f" to {args.endpoint}" if args.endpoint else " to console"))
+        sys.exit(0)
     if args.cmd == "mcp-proxy":
         from .mcp_proxy import main as mcp_main
         cmd = args.command[1:] if args.command and args.command[0] == "--" else args.command
