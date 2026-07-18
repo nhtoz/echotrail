@@ -1,14 +1,14 @@
-"""OpenTelemetry export — replay a flightrec session as OTel spans.
+"""OpenTelemetry export — replay a echotrail session as OTel spans.
 
 Bridges the evidence store into existing observability stacks (Datadog,
 Grafana, Jaeger, Honeycomb...) so teams can see agent sessions next to
 the rest of their telemetry. The OTel copy is a *view*; the hash-chained
 trace remains the evidence of record.
 
-Requires the optional extra:  pip install "flightrec[otel]"
+Requires the optional extra:  pip install "echotrail[otel]"
 
-    flightrec otel SESSION_ID                          # console exporter
-    flightrec otel SESSION_ID --endpoint http://collector:4318/v1/traces
+    echotrail otel SESSION_ID                          # console exporter
+    echotrail otel SESSION_ID --endpoint http://collector:4318/v1/traces
 """
 
 from __future__ import annotations
@@ -76,7 +76,7 @@ def export_session(
         from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
 
         tracer_provider = TracerProvider(
-            resource=Resource.create({"service.name": "flightrec"}))
+            resource=Resource.create({"service.name": "echotrail"}))
         if endpoint:
             from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 
@@ -85,13 +85,13 @@ def export_session(
         else:
             tracer_provider.add_span_processor(BatchSpanProcessor(ConsoleSpanExporter()))
 
-    tracer = tracer_provider.get_tracer("flightrec")
+    tracer = tracer_provider.get_tracer("echotrail")
     count = 0
 
     root = tracer.start_span(
         f"agent.session {head.get('name', session_id)}",
         start_time=_ns(head["ts"]),
-        attributes={"flightrec.session_id": session_id},
+        attributes={"echotrail.session_id": session_id},
     )
     ctx = trace.set_span_in_context(root)
 
@@ -101,14 +101,14 @@ def export_session(
             "tool_call": f"tool {p.get('tool', '?')}",
             "llm_request": f"llm {p.get('provider', '?')}",
         }.get(start["type"], start["type"])
-        attrs: dict[str, Any] = {"flightrec.seq": start["seq"], "flightrec.type": start["type"]}
+        attrs: dict[str, Any] = {"echotrail.seq": start["seq"], "echotrail.type": start["type"]}
         if p.get("tool"):
-            attrs["flightrec.tool"] = p["tool"]
+            attrs["echotrail.tool"] = p["tool"]
         flags = (end or start).get("payload", {}).get("_flags") or p.get("_flags")
         if flags:
-            attrs["flightrec.flagged"] = True
-            attrs["flightrec.verdicts"] = ", ".join(sorted({f["label"] for f in flags}))
-            attrs["flightrec.risk"] = (end or start).get("payload", {}).get("_risk", p.get("_risk", 0))
+            attrs["echotrail.flagged"] = True
+            attrs["echotrail.verdicts"] = ", ".join(sorted({f["label"] for f in flags}))
+            attrs["echotrail.risk"] = (end or start).get("payload", {}).get("_risk", p.get("_risk", 0))
         span = tracer.start_span(name, context=ctx, start_time=_ns(start["ts"]), attributes=attrs)
         if end and end["type"] in ("tool_error",):
             span.set_status(trace.status.Status(trace.status.StatusCode.ERROR))

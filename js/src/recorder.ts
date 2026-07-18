@@ -1,7 +1,7 @@
 /**
  * Recorder SDK for TypeScript/Node agents.
  *
- *   import { Recorder } from "flightrec";
+ *   import { Recorder } from "echotrail";
  *
  *   const rec = new Recorder("./traces");
  *   await rec.session("my-agent run", { config: { model: "gpt-x" } }, async (s) => {

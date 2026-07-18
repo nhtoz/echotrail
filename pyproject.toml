@@ -1,10 +1,16 @@
 [project]
-name = "flightrec"
-version = "0.11.0"
+name = "echotrail"
+version = "0.12.0"
 description = "Flight recorder & forensics for AI agents — tamper-evident traces, replay, injection highlighting"
+readme = "README.md"
 license = {text = "MIT"}
+authors = [{name = "Nihat Öz", email = "nihatoz@gmail.com"}]
 requires-python = ">=3.10"
 dependencies = ["fastapi>=0.110", "uvicorn>=0.29"]
+
+[project.urls]
+Homepage = "https://github.com/nhtoz/echotrail"
+Repository = "https://github.com/nhtoz/echotrail"
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
@@ -12,11 +18,11 @@ anchor = ["rfc3161ng>=2.1"]
 otel = ["opentelemetry-sdk>=1.25", "opentelemetry-exporter-otlp-proto-http>=1.25"]
 
 [project.scripts]
-flightrec = "flightrec.cli:main"
+echotrail = "echotrail.cli:main"
 
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-include = ["flightrec*"]
+include = ["echotrail*"]

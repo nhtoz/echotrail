@@ -1,9 +1,9 @@
-"""flightrec command-line interface.
+"""echotrail command-line interface.
 
-  flightrec list                     show sessions with integrity + risk
-  flightrec verify SESSION_ID        verify hash chain (exit 1 on tamper — CI friendly)
-  flightrec verify --all             verify every session
-  flightrec serve                    start the replay UI
+  echotrail list                     show sessions with integrity + risk
+  echotrail verify SESSION_ID        verify hash chain (exit 1 on tamper — CI friendly)
+  echotrail verify --all             verify every session
+  echotrail serve                    start the replay UI
 """
 
 from __future__ import annotations
@@ -53,7 +53,7 @@ def cmd_verify(store: TraceStore, session_id: str | None, verify_all: bool) -> i
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(prog="flightrec", description="Flight recorder & forensics for AI agents")
+    parser = argparse.ArgumentParser(prog="echotrail", description="Flight recorder & forensics for AI agents")
     parser.add_argument("--root", default="./traces", help="trace store directory (default ./traces)")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
@@ -78,7 +78,7 @@ def main() -> None:
     p_incident = sub.add_parser("incident", help="causal trace: injection origin -> downstream actions")
     p_incident.add_argument("session_id")
 
-    p_otel = sub.add_parser("otel", help="export a session as OpenTelemetry spans (needs flightrec[otel])")
+    p_otel = sub.add_parser("otel", help="export a session as OpenTelemetry spans (needs echotrail[otel])")
     p_otel.add_argument("session_id")
     p_otel.add_argument("--endpoint", default=None, help="OTLP HTTP endpoint (default: console output)")
 
@@ -100,7 +100,7 @@ def main() -> None:
         try:
             from .otel import export_session
         except ImportError:
-            print("OpenTelemetry SDK not installed — run: pip install 'flightrec[otel]'", file=sys.stderr)
+            print("OpenTelemetry SDK not installed — run: pip install 'echotrail[otel]'", file=sys.stderr)
             sys.exit(2)
         n = export_session(store, args.session_id, endpoint=args.endpoint)
         print(f"exported {n} span(s)" + (f" to {args.endpoint}" if args.endpoint else " to console"))
@@ -120,7 +120,7 @@ def main() -> None:
         rec = create_anchor(store, args.session_id, tsa_url=args.tsa or DEFAULT_TSA)
         print(f"anchored seq {rec['anchored_seq']} hash {rec['anchored_hash'][:16]}… via {rec['method']}")
         if rec["method"] == "local":
-            print("note: install 'flightrec[anchor]' for RFC 3161 external timestamping;")
+            print("note: install 'echotrail[anchor]' for RFC 3161 external timestamping;")
             print(f"      until then, publish this hash somewhere public: {rec['anchored_hash']}")
         print(f"anchor record: {rec['_path']}")
         sys.exit(0)

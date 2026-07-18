@@ -2,7 +2,7 @@
 
 Usage:
 
-    from flightrec import Recorder
+    from echotrail import Recorder
 
     rec = Recorder(root="./traces")
     with rec.session("support-agent run") as s:

@@ -1,8 +1,8 @@
-# flightrec ✈
+# echotrail 👣
 
-**The black box for AI agents.** Tamper-evident recording of everything your agent saw and did — prompts, model responses, tool calls — with causal incident tracing, court-grade evidence export, and a replay UI.
+**Every agent leaves a trail. echotrail is the black box for AI agents.** Tamper-evident recording of everything your agent saw and did — prompts, model responses, tool calls — with causal incident tracing, court-grade evidence export, and a replay UI.
 
-Over half of production AI agents run with no logging. When one leaks data or takes a harmful action, nobody can reconstruct why. flightrec is the flight recorder: prevention tools assume attacks can be stopped; flightrec assumes some will land, and makes sure you can prove exactly what happened.
+Over half of production AI agents run with no logging. When one leaks data or takes a harmful action, nobody can reconstruct why. echotrail is the flight recorder: prevention tools assume attacks can be stopped; echotrail assumes some will land, and makes sure you can prove exactly what happened.
 
 ## Why it's different
 
@@ -25,7 +25,7 @@ pip install -e ".[otel]"         # + OpenTelemetry export
 
 ```bash
 python examples/demo_agent.py    # writes demo traces incl. a simulated injection incident
-flightrec serve                  # replay UI at http://127.0.0.1:8377
+echotrail serve                  # replay UI at http://127.0.0.1:8377
 ```
 
 The demo shows a clean session and an injection incident: red-flagged events, an incident panel tracing the poisoned ticket to the exfiltration email, and integrity badges that flip to TAMPERED if you edit a trace file by hand.
@@ -35,7 +35,7 @@ The demo shows a clean session and an injection incident: red-flagged events, an
 ### SDK (3 lines)
 
 ```python
-from flightrec import Recorder
+from echotrail import Recorder
 
 rec = Recorder(root="./traces")
 with rec.session("support-agent run", config={
@@ -55,7 +55,7 @@ Streaming responses are relayed chunk-by-chunk to your code while the assembled 
 ### TypeScript / Node (`js/`)
 
 ```ts
-import { Recorder } from "flightrec";
+import { Recorder } from "echotrail";
 
 const rec = new Recorder("./traces");
 await rec.session("my-agent run", { config: { model: "gpt-x" } }, async (s) => {
@@ -71,8 +71,8 @@ Traces are byte-compatible across languages: a session written from Node is veri
 Wrap any stdio MCP server in your client's config — Claude Desktop, Claude Code, or any framework:
 
 ```json
-{ "command": "flightrec",
-  "args": ["mcp-proxy", "--root", "/var/flightrec/traces", "--name", "github-mcp", "--",
+{ "command": "echotrail",
+  "args": ["mcp-proxy", "--root", "/var/echotrail/traces", "--name", "github-mcp", "--",
            "npx", "-y", "@modelcontextprotocol/server-github"] }
 ```
 
@@ -81,13 +81,13 @@ All JSON-RPC traffic is relayed untouched and recorded; injection scanning and c
 ## CLI
 
 ```
-flightrec list                        sessions with integrity status + risk score
-flightrec verify SESSION_ID | --all   verify hash chain + anchors (exit 1 on tamper — CI friendly)
-flightrec serve                       replay UI
-flightrec incident SESSION_ID         causal trace: injection origin -> downstream actions
-flightrec export SESSION_ID           self-verifying evidence zip (chain of custody)
-flightrec anchor SESSION_ID           RFC 3161 external timestamp of the chain head
-flightrec otel SESSION_ID             export session as OpenTelemetry spans
+echotrail list                        sessions with integrity status + risk score
+echotrail verify SESSION_ID | --all   verify hash chain + anchors (exit 1 on tamper — CI friendly)
+echotrail serve                       replay UI
+echotrail incident SESSION_ID         causal trace: injection origin -> downstream actions
+echotrail export SESSION_ID           self-verifying evidence zip (chain of custody)
+echotrail anchor SESSION_ID           RFC 3161 external timestamp of the chain head
+echotrail otel SESSION_ID             export session as OpenTelemetry spans
 ```
 
 ### Example: incident trace
@@ -106,7 +106,7 @@ Every link cites the exact token and where it appeared — an investigator can c
 
 ### Example: evidence bundle
 
-`flightrec export` produces `<session>_evidence.zip` containing the trace, a manifest (sha256, verification state, flagged events), and a dependency-free `verify.py`:
+`echotrail export` produces `<session>_evidence.zip` containing the trace, a manifest (sha256, verification state, flagged events), and a dependency-free `verify.py`:
 
 ```
 $ python verify.py

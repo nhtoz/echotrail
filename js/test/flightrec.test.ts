@@ -7,7 +7,7 @@ import * as path from "node:path";
 import { Recorder, TraceStore, scanText, riskScore } from "../src/index.js";
 
 function tmpdir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "flightrec-"));
+  return fs.mkdtempSync(path.join(os.tmpdir(), "echotrail-"));
 }
 
 test("chain verifies and tampering is detected", () => {
