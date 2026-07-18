@@ -75,6 +75,9 @@ def main() -> None:
     p_anchor.add_argument("session_id")
     p_anchor.add_argument("--tsa", default=None, help="TSA URL (default freetsa.org)")
 
+    p_incident = sub.add_parser("incident", help="causal trace: injection origin -> downstream actions")
+    p_incident.add_argument("session_id")
+
     args = parser.parse_args()
     store = TraceStore(args.root)
 
@@ -84,6 +87,12 @@ def main() -> None:
         if not args.all and not args.session_id:
             parser.error("provide SESSION_ID or --all")
         sys.exit(cmd_verify(store, args.session_id, args.all))
+    if args.cmd == "incident":
+        from .causal import causal_analysis, format_report
+        events = list(store.read(args.session_id))
+        incidents = causal_analysis(events)
+        print(format_report(args.session_id, incidents))
+        sys.exit(0)
     if args.cmd == "anchor":
         from .anchor import DEFAULT_TSA, create_anchor
         rec = create_anchor(store, args.session_id, tsa_url=args.tsa or DEFAULT_TSA)

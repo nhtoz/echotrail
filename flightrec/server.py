@@ -12,6 +12,7 @@ import json
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
 
+from .causal import causal_analysis
 from .store import TraceStore
 
 app = FastAPI(title="flightrec")
@@ -47,6 +48,7 @@ def session_detail(session_id: str) -> JSONResponse:
                 "first_bad_seq": v.first_bad_seq,
                 "reason": v.reason,
             },
+            "incidents": causal_analysis(events),
         }
     )
 
@@ -88,6 +90,13 @@ PAGE = """<!doctype html>
   .flag.sev-low { background:#1c2416; color:#9ccc65; border-color:#9ccc65; }
   .risk { display:inline-block; padding:1px 8px; border-radius:10px; font-size:11px;
           background:#2d1214; color:var(--bad); border:1px solid var(--bad); }
+  .incident { border:1px solid var(--bad); border-radius:8px; background:#1a0f10;
+              padding:10px 14px; margin-bottom:14px; }
+  .incident h3 { margin:0 0 6px; font-size:13px; color:var(--bad); }
+  .incident .arrow { color:var(--dim); }
+  .incident .taint { color:#ffdcd7; }
+  .incident .tok { background:#67060c; border-radius:3px; padding:0 4px; }
+  .event.tainted { border-color:var(--warn); }
   .ebody { display:none; padding:0 14px 12px; }
   .event.open .ebody { display:block; }
   pre { background:var(--bg); border:1px solid var(--line); border-radius:6px; padding:10px;
@@ -131,13 +140,25 @@ async function openSession(id) {
   const fnote = flagged
     ? ` <span class="badge bad">${flagged} flagged event(s)</span> <span class="risk">session risk ${totalRisk}</span>`
     : '';
+  const taintedSeqs = new Set();
+  (data.incidents || []).forEach(i => i.affected.forEach(a => { if (a.link === 'taint') taintedSeqs.add(a.seq); }));
+  const incidentsHtml = (data.incidents || []).filter(i => i.taint_hits > 0).map(i => `
+    <div class="incident">
+      <h3>&#9888; Incident: injection at seq ${i.origin_seq} (risk ${i.risk})</h3>
+      <div>verdicts: ${i.verdicts.map(esc).join(', ')}</div>
+      ${i.taint_tokens.length ? `<div>injected tokens: ${i.taint_tokens.map(t => `<span class="tok">${esc(t)}</span>`).join(' ')}</div>` : ''}
+      ${i.affected.filter(a => a.link === 'taint').map(a =>
+        `<div class="taint"><span class="arrow">&#8627;</span> seq ${a.seq} ${esc(a.type)}${a.tool ? ' · ' + esc(a.tool) : ''}
+         — evidence: ${a.evidence.map(t => `<span class="tok">${esc(t)}</span>`).join(' ')}</div>`).join('')}
+    </div>`).join('');
   document.getElementById('main').innerHTML =
-    `<div style="margin-bottom:16px">${vbadge}${fnote}</div>` +
-    data.events.map(renderEvent).join('');
+    `<div style="margin-bottom:16px">${vbadge}${fnote}</div>` + incidentsHtml +
+    data.events.map(e => renderEvent(e, taintedSeqs)).join('');
 }
 
-function renderEvent(e) {
+function renderEvent(e, taintedSeqs) {
   const flags = (e.payload && e.payload._flags) || [];
+  const tainted = taintedSeqs && taintedSeqs.has(e.seq);
   const flagHtml = flags.map(f =>
     `<span class="flag sev-${esc(f.severity || 'high')}">&#9873; ${esc(f.label)} · ${esc(f.severity || '')} ${f.weight ? '+'+f.weight : ''}</span>`).join('');
   const ts = new Date(e.ts*1000).toLocaleTimeString();
@@ -147,9 +168,9 @@ function renderEvent(e) {
     const m = esc(f.match).replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&');
     try { body = body.replace(new RegExp(m, 'gi'), x => `<mark>${x}</mark>`); } catch(_) {}
   }
-  return `<div class="event t-${e.type} ${flags.length ? 'flagged':''}" onclick="this.classList.toggle('open')">
+  return `<div class="event t-${e.type} ${flags.length ? 'flagged':''} ${tainted ? 'tainted':''}" onclick="this.classList.toggle('open')">
     <div class="ehead"><span class="eseq">#${e.seq}</span><span class="etype">${e.type}</span>
-      ${flagHtml}<span class="ets">${ts}</span></div>
+      ${flagHtml}${tainted ? '<span class="flag sev-medium">&#8627; tainted by injection</span>' : ''}<span class="ets">${ts}</span></div>
     <div class="ebody"><pre>${body}</pre>
       <div style="color:var(--dim);font-size:11px">hash ${e.hash.slice(0,16)}… ← prev ${e.prev_hash.slice(0,16)}…</div>
     </div></div>`;
