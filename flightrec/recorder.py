@@ -21,6 +21,7 @@ replay in the web UI.
 from __future__ import annotations
 
 import functools
+import inspect
 import traceback
 from contextlib import contextmanager
 from pathlib import Path
@@ -94,6 +95,20 @@ class Session:
     # -- tool recording ---------------------------------------------------
 
     def record_tool(self, fn: Callable) -> Callable:
+        if inspect.iscoroutinefunction(fn):
+            @functools.wraps(fn)
+            async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
+                self.log("tool_call", tool=fn.__name__, args=_safe(list(args)), kwargs=_safe(kwargs))
+                try:
+                    result = await fn(*args, **kwargs)
+                except Exception as e:
+                    self.log("tool_error", tool=fn.__name__, error=str(e), trace=traceback.format_exc()[-2000:])
+                    raise
+                self.log("tool_result", tool=fn.__name__, result=_safe(result))
+                return result
+
+            return async_wrapper
+
         @functools.wraps(fn)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
             self.log("tool_call", tool=fn.__name__, args=_safe(list(args)), kwargs=_safe(kwargs))
@@ -116,8 +131,67 @@ class Session:
         return _AnthropicProxy(client, self)
 
 
+def _delta_text(chunk: Any) -> str:
+    """Best-effort extraction of streamed text deltas (OpenAI/Anthropic shapes)."""
+    d = _safe(chunk)
+    if isinstance(d, dict):
+        try:  # openai: choices[0].delta.content
+            c = d.get("choices", [{}])[0].get("delta", {}).get("content")
+            if isinstance(c, str):
+                return c
+        except Exception:
+            pass
+        for key in ("delta", "content_block"):  # anthropic: delta.text
+            v = d.get(key)
+            if isinstance(v, dict) and isinstance(v.get("text"), str):
+                return v["text"]
+    return ""
+
+
+class _RecordingStream:
+    """Wraps a sync stream: relays chunks, logs one llm_response at the end."""
+
+    def __init__(self, stream: Any, session: Session, provider: str):
+        self._stream, self._session, self._provider = stream, session, provider
+        self._text, self._chunks = [], 0
+
+    def __iter__(self):
+        try:
+            for chunk in self._stream:
+                self._chunks += 1
+                self._text.append(_delta_text(chunk))
+                yield chunk
+        finally:
+            self._session.log("llm_response", provider=self._provider, streamed=True,
+                              chunk_count=self._chunks, response={"content": "".join(self._text)})
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._stream, name)
+
+
+class _AsyncRecordingStream:
+    """Async variant of _RecordingStream."""
+
+    def __init__(self, stream: Any, session: Session, provider: str):
+        self._stream, self._session, self._provider = stream, session, provider
+        self._text, self._chunks = [], 0
+
+    async def __aiter__(self):
+        try:
+            async for chunk in self._stream:
+                self._chunks += 1
+                self._text.append(_delta_text(chunk))
+                yield chunk
+        finally:
+            self._session.log("llm_response", provider=self._provider, streamed=True,
+                              chunk_count=self._chunks, response={"content": "".join(self._text)})
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._stream, name)
+
+
 class _RecordedCall:
-    """Wraps a `.create(...)` style method, logging request and response."""
+    """Wraps a `.create(...)` style method (sync or async, streaming or not)."""
 
     def __init__(self, inner: Callable, session: Session, provider: str):
         self._inner = inner
@@ -126,9 +200,22 @@ class _RecordedCall:
 
     def __call__(self, **kwargs: Any) -> Any:
         self._session.log("llm_request", provider=self._provider, request=_safe(kwargs))
-        response = self._inner(**kwargs)
+        result = self._inner(**kwargs)
+        if inspect.isawaitable(result):
+            return self._finish_async(result)
+        return self._finish(result)
+
+    def _finish(self, response: Any) -> Any:
+        if hasattr(response, "__aiter__"):
+            return _AsyncRecordingStream(response, self._session, self._provider)
+        if hasattr(response, "__iter__") and not hasattr(response, "model_dump") \
+                and not isinstance(response, (dict, list, str, bytes)):
+            return _RecordingStream(response, self._session, self._provider)
         self._session.log("llm_response", provider=self._provider, response=_safe(response))
         return response
+
+    async def _finish_async(self, coro: Any) -> Any:
+        return self._finish(await coro)
 
 
 class _AttrProxy:

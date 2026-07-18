@@ -275,6 +275,97 @@ def test_mcp_proxy_records_and_flags(tmp_path):
         for a in incidents[0]["affected"])
 
 
+def test_async_tool_decorator(tmp_path):
+    import asyncio
+
+    rec = Recorder(root=tmp_path)
+    with rec.session("s") as s:
+        @s.record_tool
+        async def fetch(url: str):
+            return f"content of {url}"
+
+        result = asyncio.run(fetch("https://example.com"))
+        assert result == "content of https://example.com"
+    types = [e["type"] for e in rec.store.read(s.session_id)]
+    assert "tool_call" in types and "tool_result" in types
+
+
+def test_async_client_wrapper(tmp_path):
+    import asyncio
+
+    class FakeCompletions:
+        async def create(self, **kwargs):
+            return {"content": "hello", "model": kwargs.get("model")}
+
+    class FakeAsyncClient:
+        def __init__(self):
+            self.completions = FakeCompletions()
+
+    rec = Recorder(root=tmp_path)
+    with rec.session("s") as s:
+        client = s.wrap_openai(FakeAsyncClient())
+        resp = asyncio.run(client.completions.create(model="gpt-x", messages=[]))
+        assert resp["content"] == "hello"
+    types = [e["type"] for e in rec.store.read(s.session_id)]
+    assert types.count("llm_request") == 1 and types.count("llm_response") == 1
+
+
+def test_sync_streaming_records_assembled_response(tmp_path):
+    class FakeStream:
+        def __iter__(self):
+            for word in ["Hel", "lo ", "world"]:
+                yield {"choices": [{"delta": {"content": word}}]}
+
+    class FakeCompletions:
+        def create(self, **kwargs):
+            return FakeStream()
+
+    class FakeClient:
+        def __init__(self):
+            self.completions = FakeCompletions()
+
+    rec = Recorder(root=tmp_path)
+    with rec.session("s") as s:
+        client = s.wrap_openai(FakeClient())
+        chunks = list(client.completions.create(model="gpt-x", stream=True))
+        assert len(chunks) == 3
+    events = list(rec.store.read(s.session_id))
+    resp = [e for e in events if e["type"] == "llm_response"]
+    assert len(resp) == 1
+    assert resp[0]["payload"]["response"]["content"] == "Hello world"
+    assert resp[0]["payload"]["streamed"] is True and resp[0]["payload"]["chunk_count"] == 3
+
+
+def test_async_streaming_records_assembled_response(tmp_path):
+    import asyncio
+
+    class FakeAsyncStream:
+        async def __aiter__(self):
+            for word in ["str", "eam", "ed!"]:
+                yield {"delta": {"text": word}}
+
+    class FakeMessages:
+        async def create(self, **kwargs):
+            return FakeAsyncStream()
+
+    class FakeAsyncClient:
+        def __init__(self):
+            self.messages = FakeMessages()
+
+    async def run(client):
+        stream = await client.messages.create(model="claude-x", stream=True)
+        return [c async for c in stream]
+
+    rec = Recorder(root=tmp_path)
+    with rec.session("s") as s:
+        client = s.wrap_anthropic(FakeAsyncClient())
+        chunks = asyncio.run(run(client))
+        assert len(chunks) == 3
+    events = list(rec.store.read(s.session_id))
+    resp = [e for e in events if e["type"] == "llm_response"]
+    assert len(resp) == 1 and resp[0]["payload"]["response"]["content"] == "streamed!"
+
+
 def test_config_snapshot_recorded_in_chain(tmp_path):
     rec = Recorder(root=tmp_path)
     with rec.session("s", config={
