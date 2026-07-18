@@ -68,6 +68,29 @@ class Session:
             payload["_risk"] = risk_score(findings)
         self.store.append(self.session_id, event_type, payload)
 
+    # -- configuration capture --------------------------------------------
+
+    def snapshot_config(
+        self,
+        system_prompt: str | None = None,
+        model: str | None = None,
+        tools: list[str] | None = None,
+        **extra: Any,
+    ) -> None:
+        """Record the agent's configuration at this point in the session.
+
+        The most frequently missing evidence in agent incident forensics
+        is the exact system prompt / model version in force at incident
+        time. Capture it inside the hash chain so it can't be disputed.
+        """
+        self.log(
+            "config_snapshot",
+            system_prompt=system_prompt,
+            model=model,
+            tools=tools or [],
+            **extra,
+        )
+
     # -- tool recording ---------------------------------------------------
 
     def record_tool(self, fn: Callable) -> Callable:
@@ -146,9 +169,18 @@ class Recorder:
         self.store = TraceStore(root)
 
     @contextmanager
-    def session(self, name: str, metadata: dict[str, Any] | None = None) -> Iterator[Session]:
+    def session(
+        self,
+        name: str,
+        metadata: dict[str, Any] | None = None,
+        config: dict[str, Any] | None = None,
+    ) -> Iterator[Session]:
+        """Open a recorded session. Pass `config` (system_prompt, model,
+        tools, ...) to snapshot agent configuration as the first chained event."""
         session_id = self.store.create_session(name, metadata)
         s = Session(self.store, session_id)
+        if config:
+            s.snapshot_config(**config)
         try:
             yield s
             s.log("session_end", status="ok")

@@ -78,6 +78,7 @@ PAGE = """<!doctype html>
   .ehead { padding:8px 14px; display:flex; gap:12px; align-items:center; cursor:pointer; }
   .etype { font-weight:bold; }
   .t-llm_request .etype { color:var(--acc); } .t-llm_response .etype { color:#bc8cff; }
+  .t-config_snapshot .etype { color:#79c0ff; }
   .t-tool_call .etype { color:var(--warn); } .t-tool_result .etype { color:var(--ok); }
   .t-tool_error .etype, .t-session_end.err .etype { color:var(--bad); }
   .eseq { color:var(--dim); width:44px; } .ets { color:var(--dim); font-size:12px; margin-left:auto; }

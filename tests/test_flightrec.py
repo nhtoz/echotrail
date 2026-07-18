@@ -168,3 +168,18 @@ def test_anchor_detects_rewritten_history(tmp_path):
     # internal chain now verifies (attacker rebuilt it) — but the anchor catches the rewrite
     assert store.verify(sid).ok
     assert not any(a["ok"] for a in check_anchors(store, sid))
+
+
+def test_config_snapshot_recorded_in_chain(tmp_path):
+    rec = Recorder(root=tmp_path)
+    with rec.session("s", config={
+        "system_prompt": "You are a helpful agent.",
+        "model": "claude-sonnet-5",
+        "tools": ["search", "send_email"],
+    }) as s:
+        s.log("tool_call", tool="search")
+    events = list(rec.store.read(s.session_id))
+    snap = [e for e in events if e["type"] == "config_snapshot"]
+    assert len(snap) == 1 and snap[0]["seq"] == 1  # first chained event
+    assert snap[0]["payload"]["model"] == "claude-sonnet-5"
+    assert rec.store.verify(s.session_id).ok

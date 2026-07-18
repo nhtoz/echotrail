@@ -23,8 +23,14 @@ POISONED_TICKET = (
 
 rec = Recorder(root="./traces")
 
+AGENT_CONFIG = {
+    "system_prompt": "You are a support agent. Resolve the ticket.",
+    "model": "mock-llm-20260101",
+    "tools": ["read_ticket", "send_email", "export_customers"],
+}
+
 # --- Run 1: normal, clean session -----------------------------------------
-with rec.session("support-agent — ticket #4790 (clean)") as s:
+with rec.session("support-agent — ticket #4790 (clean)", config=AGENT_CONFIG) as s:
 
     @s.record_tool
     def read_ticket(ticket_id: str) -> str:
@@ -45,7 +51,7 @@ with rec.session("support-agent — ticket #4790 (clean)") as s:
     send_email("customer@example.com", "Here are the steps to reset your password…")
 
 # --- Run 2: session hit by prompt injection --------------------------------
-with rec.session("support-agent — ticket #4821 (injection incident)") as s:
+with rec.session("support-agent — ticket #4821 (injection incident)", config=AGENT_CONFIG) as s:
 
     @s.record_tool
     def read_ticket(ticket_id: str) -> str:
