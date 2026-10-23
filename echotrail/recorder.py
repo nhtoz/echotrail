@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import functools
 import inspect
+import sys
 import traceback
 from contextlib import contextmanager
 from pathlib import Path
@@ -252,8 +253,30 @@ class _AnthropicProxy(_AttrProxy):
 
 
 class Recorder:
-    def __init__(self, root: str | Path = "./traces"):
+    """Records sessions into a hash-chained trace store.
+
+    anchor: set to a TSA URL (or True for the default TSA) to timestamp the
+    sealed chain with RFC 3161 when each session closes, so the whole
+    session, including session_end, is externally provable. Anchoring
+    failures are reported on stderr and never break the agent.
+    """
+
+    def __init__(self, root: str | Path = "./traces", anchor: bool | str | Callable[[bytes], bytes] | None = None):
         self.store = TraceStore(root)
+        self.anchor = anchor
+
+    def _anchor(self, session_id: str) -> None:
+        if not self.anchor:
+            return
+        from .anchor import DEFAULT_TSA, create_anchor
+        try:
+            if callable(self.anchor):
+                create_anchor(self.store, session_id, _timestamper=self.anchor)
+            else:
+                url = self.anchor if isinstance(self.anchor, str) else DEFAULT_TSA
+                create_anchor(self.store, session_id, tsa_url=url)
+        except Exception as e:
+            print(f"echotrail: anchoring session {session_id} failed: {e}", file=sys.stderr)
 
     @contextmanager
     def session(
@@ -271,6 +294,8 @@ class Recorder:
         try:
             yield s
             s.log("session_end", status="ok")
-        except Exception as e:
-            s.log("session_end", status="error", error=str(e))
+        except BaseException as e:
+            s.log("session_end", status="error", error=f"{type(e).__name__}: {e}")
+            self._anchor(session_id)
             raise
+        self._anchor(session_id)

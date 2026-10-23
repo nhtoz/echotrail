@@ -37,7 +37,8 @@ def _parse(line: bytes) -> dict[str, Any] | None:
 
 
 class MCPProxy:
-    def __init__(self, root: str, name: str, command: list[str]):
+    def __init__(self, root: str, name: str, command: list[str], anchor: str | bool | None = None):
+        self.anchor = anchor
         self.root = root
         self.name = name
         self.command = command
@@ -105,7 +106,7 @@ class MCPProxy:
         child = subprocess.Popen(
             self.command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=sys.stderr,
         )
-        rec = Recorder(root=self.root)
+        rec = Recorder(root=self.root, anchor=self.anchor)
         with rec.session(self.name, metadata={"mode": "mcp-proxy", "command": self.command}) as s:
             t_up = threading.Thread(
                 target=self._relay, args=(sys.stdin.buffer, child.stdin, s, "client->server"), daemon=True)
@@ -119,8 +120,8 @@ class MCPProxy:
         return code
 
 
-def main(root: str, name: str | None, command: list[str]) -> int:
+def main(root: str, name: str | None, command: list[str], anchor: str | bool | None = None) -> int:
     if not command:
         print("usage: echotrail mcp-proxy [--name NAME] -- <server command...>", file=sys.stderr)
         return 2
-    return MCPProxy(root, name or f"mcp:{command[0]}", command).run()
+    return MCPProxy(root, name or f"mcp:{command[0]}", command, anchor).run()

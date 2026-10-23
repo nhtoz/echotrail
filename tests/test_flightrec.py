@@ -107,12 +107,13 @@ def test_cli_verify_exit_codes(tmp_path):
     assert bad.returncode == 1 and "TAMPER" in bad.stdout
 
 
-def test_evidence_bundle_roundtrip(tmp_path):
+def test_evidence_bundle_roundtrip(tmp_path, local_tsa):
     import subprocess
     import zipfile
     from echotrail.export import build_evidence_bundle
 
-    rec = Recorder(root=tmp_path / "traces")
+    timestamper, ca = local_tsa
+    rec = Recorder(root=tmp_path / "traces", anchor=timestamper)
     with rec.session("evidence test") as s:
         s.log("tool_call", tool="send_email", to="x@example.com")
 
@@ -123,9 +124,9 @@ def test_evidence_bundle_roundtrip(tmp_path):
     with zipfile.ZipFile(zip_path) as z:
         z.extractall(extract)
 
-    # standalone verifier passes on intact evidence
-    ok = subprocess.run([sys.executable, str(extract / "verify.py")], capture_output=True, text=True)
-    assert ok.returncode == 0 and "EVIDENCE VERIFIED" in ok.stdout
+    # standalone verifier passes on intact, anchored evidence (auditor trusts this TSA's CA)
+    ok = subprocess.run([sys.executable, "-I", str(extract / "verify.py"), "--ca", ca], capture_output=True, text=True)
+    assert ok.returncode == 0 and "EVIDENCE VERIFIED" in ok.stdout, ok.stdout
 
     # forging the extracted evidence makes the standalone verifier fail
     events_file = extract / "events.jsonl"
@@ -134,22 +135,23 @@ def test_evidence_bundle_roundtrip(tmp_path):
     lines[1] = json.dumps(ev, ensure_ascii=False)
     events_file.write_text("\n".join(lines) + "\n")
 
-    bad = subprocess.run([sys.executable, str(extract / "verify.py")], capture_output=True, text=True)
+    bad = subprocess.run([sys.executable, "-I", str(extract / "verify.py"), "--ca", ca], capture_output=True, text=True)
     assert bad.returncode == 1 and "FAIL" in bad.stdout
 
 
-def test_anchor_detects_rewritten_history(tmp_path):
+def test_anchor_detects_rewritten_history(tmp_path, local_tsa):
     from echotrail.anchor import create_anchor, check_anchors
 
-    store = TraceStore(tmp_path)
+    timestamper, ca = local_tsa
+    store = TraceStore(tmp_path / "t")
     sid = store.create_session("t")
     store.append(sid, "tool_call", {"tool": "issue_refund", "amount": 50})
 
-    # anchor with an injected fake TSA (returns dummy token bytes)
-    rec = create_anchor(store, sid, _timestamper=lambda data: b"FAKE-TSR-" + data[:8])
+    # anchor with a real (local) RFC 3161 TSA
+    rec = create_anchor(store, sid, _timestamper=timestamper)
     assert rec["method"] == "rfc3161" and rec["anchored_seq"] == 1
 
-    assert all(a["ok"] for a in check_anchors(store, sid))
+    assert all(a["ok"] is True for a in check_anchors(store, sid, ca))
 
     # rewrite history wholesale: forge the event AND recompute the chain
     import hashlib
@@ -162,12 +164,12 @@ def test_anchor_detects_rewritten_history(tmp_path):
         body = {k: v for k, v in e.items() if k != "hash"}
         e["hash"] = hashlib.sha256(_canonical(body)).hexdigest()
         prev = e["hash"]
-    (tmp_path / f"{sid}.jsonl").write_text(
+    (tmp_path / "t" / f"{sid}.jsonl").write_text(
         "\n".join(json.dumps(e, ensure_ascii=False) for e in events) + "\n")
 
     # internal chain now verifies (attacker rebuilt it) — but the anchor catches the rewrite
     assert store.verify(sid).ok
-    assert not any(a["ok"] for a in check_anchors(store, sid))
+    assert not any(a["ok"] for a in check_anchors(store, sid, ca))
 
 
 def test_causal_taint_links_injection_to_actions(tmp_path):

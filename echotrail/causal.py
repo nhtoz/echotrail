@@ -23,10 +23,15 @@ from typing import Any
 
 ACTION_TYPES = {"tool_call", "tool_result", "llm_response", "tool_error"}
 
+# Where injected content can ENTER a session. Model output (llm_response) and
+# the agent's own tool calls are consequences, never origins, so flags on them
+# do not open an incident (they remain visible as advisory flags).
+ORIGIN_TYPES = {"tool_result", "tool_error", "mcp_response", "mcp_error", "mcp_notification", "llm_request"}
+
 # tokens worth tracking from injected content into later actions
 _TAINT_PATTERNS = [
     re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}"),          # emails
-    re.compile(r"https?://[^\s\"'<>]+"),                                     # urls
+    re.compile(r"https?://[^\s\"'<>\\]+"),                                   # urls
     re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b"),                              # IPs
     re.compile(r"\b[a-zA-Z0-9-]+\.(?:example|evil|attacker)[a-zA-Z0-9.-]*"), # suspicious hosts
 ]
@@ -48,10 +53,19 @@ def _taint_tokens(text: str) -> set[str]:
 
 def causal_analysis(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Return incident groups: each flagged origin with its linked downstream actions."""
-    flagged = [
-        e for e in events
-        if isinstance(e.get("payload"), dict) and e["payload"].get("_flags")
-    ]
+    flagged = []
+    seen_matches: set[tuple[str, str]] = set()
+    for e in events:
+        p = e.get("payload")
+        if e.get("type") not in ORIGIN_TYPES or not isinstance(p, dict) or not p.get("_flags"):
+            continue
+        matches = {(str(f.get("label")), str(f.get("match"))) for f in p["_flags"]}
+        # an llm_request that merely replays already-flagged content (the
+        # conversation history) is not a new origin
+        if e.get("type") == "llm_request" and matches <= seen_matches:
+            continue
+        seen_matches |= matches
+        flagged.append(e)
     if not flagged:
         return []
 

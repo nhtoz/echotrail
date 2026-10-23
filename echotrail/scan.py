@@ -18,7 +18,9 @@ PATTERNS: list[tuple[str, str, str]] = [
     (r"disregard\s+(your|the)\s+(system\s+prompt|instructions|rules)", "instruction override", "high"),
     (r"you\s+are\s+now\s+(in\s+)?(developer|dan|jailbreak|god)\s*mode", "persona hijack", "medium"),
     (r"do\s+not\s+(tell|inform|alert)\s+(the\s+)?(user|human|operator)", "concealment request", "high"),
-    (r"(exfiltrate|forward|send)\s+.{0,40}(credentials|password|api\s*key|secret|token)", "credential exfiltration", "high"),
+    # "password" followed by reset/change/recovery is routine support language, not exfiltration
+    (r"(exfiltrate|forward|send)\s+.{0,40}(credentials|passwords?(?![\s-]*(reset|change|recovery))|api\s*key|secret|token)",
+     "credential exfiltration", "high"),
     (r"curl\s+.{0,60}\|\s*(ba)?sh", "remote code execution", "high"),
     (r"base64\s+-d", "encoded payload", "low"),
     (r"<\s*(system|assistant)\s*>", "role tag smuggling", "medium"),
