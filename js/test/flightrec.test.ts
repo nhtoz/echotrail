@@ -90,3 +90,28 @@ test("wrapClient records create() and streaming responses", async () => {
   assert.equal(
     (streamed!.payload!.response as Record<string, unknown>).content, "Hello world");
 });
+
+test("canonical JSON matches Python json.dumps byte-for-byte", async () => {
+  const { pyFloatRepr, canonical } = await import("../src/store.js");
+  // expected strings are Python 3 repr() / json.dumps output
+  const cases: Array<[number, string]> = [
+    [0.1, "0.1"], [5.5, "5.5"], [1e-5, "1e-05"], [1.5e-7, "1.5e-07"], [0.0001, "0.0001"],
+    [1e16, "1e+16"], [1e21, "1e+21"], [-2.5e-6, "-2.5e-06"], [-0, "-0.0"], [123456789.123, "123456789.123"],
+  ];
+  for (const [n, want] of cases) assert.equal(pyFloatRepr(n), want);
+  assert.equal(canonical({ b: 1, a: 0.00001 }), '{"a":1e-05,"b":1}');
+  // Python sorts keys by code point: U+FFFF sorts before U+1F600 there, after it in UTF-16
+  assert.equal(canonical({ "😀": 1, "￿": 2 }), '{"￿":2,"😀":1}');
+});
+
+test("verify() hashes numbers exactly as written (Python-written traces)", async () => {
+  const { createHash } = await import("node:crypto");
+  const dir = tmpdir();
+  // a line as Python writes it: 5.0 and 1e-05 have no exact JS spelling
+  const body = '{"payload":{"a":5.0,"b":1e-05},"prev_hash":"' + "0".repeat(64) +
+    '","seq":0,"session_id":"py","ts":1.5,"type":"session_start"}';
+  const hash = createHash("sha256").update(body).digest("hex");
+  fs.writeFileSync(path.join(dir, "py.jsonl"), body.slice(0, -1) + `,"hash":"${hash}"}\n`);
+  const v = new TraceStore(dir).verify("py");
+  assert.equal(v.ok, true, JSON.stringify(v));
+});

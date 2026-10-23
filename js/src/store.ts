@@ -27,24 +27,110 @@ export interface VerificationResult {
   events: number;
   firstBadSeq: number | null;
   reason: string | null;
+  sealed?: boolean;
 }
 
-/** Canonical JSON: recursively sorted keys, compact separators — matches
- *  Python's json.dumps(sort_keys=True, separators=(",",":"), ensure_ascii=False). */
-export function canonical(obj: unknown): string {
-  return JSON.stringify(sortKeys(obj));
+/**
+ * Canonical JSON, byte-identical to Python's
+ *   json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+ * which is what the Python CLI hashes. Two details JSON.stringify gets wrong:
+ *   - floats: Python writes 1e-05 / 1.5e-07 / 1e+16 where JS writes 0.00001 /
+ *     1.5e-7 / 10000000000000000, and keeps "5.0" where JS has 5;
+ *   - key order: Python sorts by code point, JS sort() by UTF-16 unit.
+ */
+
+/** A number whose original JSON source text is known (used when verifying). */
+class SourceNumber {
+  constructor(readonly src: string) {}
 }
 
-function sortKeys(v: unknown): unknown {
-  if (Array.isArray(v)) return v.map(sortKeys);
-  if (v !== null && typeof v === "object") {
-    const out: Record<string, unknown> = {};
-    for (const k of Object.keys(v as object).sort()) {
-      out[k] = sortKeys((v as Record<string, unknown>)[k]);
+/** Python repr() of a float (shortest round-trip digits, Python's layout). */
+export function pyFloatRepr(n: number): string {
+  if (Number.isNaN(n)) return "NaN";
+  if (n === Infinity) return "Infinity";
+  if (n === -Infinity) return "-Infinity";
+  const neg = n < 0 || Object.is(n, -0);
+  const [mant, expStr] = Math.abs(n).toExponential().split("e");
+  const digits = mant.replace(".", "");
+  const e = parseInt(expStr, 10);
+  let body: string;
+  if (n === 0) {
+    body = "0.0";
+  } else if (e >= -4 && e < 16) {
+    if (e >= 0) {
+      const intPart = digits.slice(0, e + 1).padEnd(e + 1, "0");
+      const frac = digits.slice(e + 1) || "0";
+      body = `${intPart}.${frac}`;
+    } else {
+      body = `0.${"0".repeat(-e - 1)}${digits}`;
     }
-    return out;
+  } else {
+    const m = digits.length > 1 ? `${digits[0]}.${digits.slice(1)}` : digits;
+    body = `${m}e${e < 0 ? "-" : "+"}${String(Math.abs(e)).padStart(2, "0")}`;
   }
-  return v;
+  return (neg ? "-" : "") + body;
+}
+
+/** How Python would re-serialise a JSON number token after json.loads. */
+function pyNumberFromSource(src: string): string {
+  if (/[.eE]/.test(src)) return pyFloatRepr(Number(src));
+  return BigInt(src).toString(); // Python ints are arbitrary precision
+}
+
+/** Serialise a JS number the way Python will read it back and re-dump it. */
+function pyNumber(n: number): string {
+  if (!Number.isFinite(n)) return "null"; // JSON.stringify semantics
+  if (Number.isInteger(n) && Math.abs(n) < 1e16) return Object.is(n, -0) ? "0" : String(n);
+  return pyFloatRepr(n);
+}
+
+function cmpCodePoints(a: string, b: string): number {
+  const ia = a[Symbol.iterator](), ib = b[Symbol.iterator]();
+  for (;;) {
+    const x = ia.next(), y = ib.next();
+    if (x.done || y.done) return x.done === y.done ? 0 : x.done ? -1 : 1;
+    const cx = x.value.codePointAt(0)!, cy = y.value.codePointAt(0)!;
+    if (cx !== cy) return cx - cy;
+  }
+}
+
+function serialize(v: unknown, sort: boolean): string {
+  if (v instanceof SourceNumber) return pyNumberFromSource(v.src);
+  if (v === null || v === undefined) return "null";
+  if (typeof v === "number") return pyNumber(v);
+  if (typeof v === "bigint") return v.toString();
+  if (typeof v === "string" || typeof v === "boolean") return JSON.stringify(v);
+  if (Array.isArray(v)) return `[${v.map((x) => (x === undefined || typeof x === "function" ? "null" : serialize(x, sort))).join(",")}]`;
+  if (typeof v === "object") {
+    const anyV = v as { toJSON?: () => unknown };
+    if (typeof anyV.toJSON === "function") return serialize(anyV.toJSON(), sort);
+    let keys = Object.keys(v as object).filter((k) => {
+      const x = (v as Record<string, unknown>)[k];
+      return x !== undefined && typeof x !== "function";
+    });
+    if (sort) keys = keys.sort(cmpCodePoints);
+    return `{${keys.map((k) => `${JSON.stringify(k)}:${serialize((v as Record<string, unknown>)[k], sort)}`).join(",")}}`;
+  }
+  return "null";
+}
+
+export function canonical(obj: unknown): string {
+  return serialize(obj, true);
+}
+
+/** Line format written to disk (unsorted, Python-compatible numbers). */
+export function toLine(obj: unknown): string {
+  return serialize(obj, false);
+}
+
+/** Parse keeping each number's source text, so verification hashes exactly
+ *  what Python would. Needs JSON.parse source access (Node >= 21); older
+ *  Node falls back to plain parsing. */
+function parseWithSources(line: string): Record<string, unknown> {
+  return JSON.parse(line, function (this: unknown, _k: string, value: unknown, ctx?: { source?: string }) {
+    if (typeof value === "number" && ctx && typeof ctx.source === "string") return new SourceNumber(ctx.source);
+    return value;
+  } as (this: unknown, key: string, value: unknown) => unknown);
 }
 
 export function hashEvent(body: Record<string, unknown>): string {
@@ -79,7 +165,7 @@ export class TraceStore {
       name, metadata, prev_hash: GENESIS,
     };
     header.hash = hashEvent(header);
-    fs.writeFileSync(this.path(sessionId), JSON.stringify(header) + "\n");
+    fs.writeFileSync(this.path(sessionId), toLine(header) + "\n", { flag: "wx" });
     return sessionId;
   }
 
@@ -91,7 +177,7 @@ export class TraceStore {
       payload, prev_hash: last.hash,
     };
     event.hash = hashEvent(event);
-    fs.appendFileSync(this.path(sessionId), JSON.stringify(event) + "\n");
+    fs.appendFileSync(this.path(sessionId), toLine(event) + "\n");
     return event as unknown as TraceEvent;
   }
 
@@ -104,18 +190,30 @@ export class TraceStore {
   verify(sessionId: string): VerificationResult {
     let prev = GENESIS;
     let count = 0;
-    for (const event of this.read(sessionId)) {
-      const { hash, ...body } = event;
+    let lastType: unknown = null;
+    const lines = fs.readFileSync(this.path(sessionId), "utf8").split("\n").filter((l) => l.trim());
+    for (const line of lines) {
+      let event: Record<string, unknown>, withSrc: Record<string, unknown>;
+      try {
+        event = JSON.parse(line);
+        withSrc = parseWithSources(line);
+      } catch {
+        return { ok: false, events: count, firstBadSeq: count, reason: "malformed line (not valid JSON event)" };
+      }
+      const seq = event.seq as number;
       if (event.prev_hash !== prev) {
-        return { ok: false, events: count, firstBadSeq: event.seq, reason: "chain broken (prev_hash mismatch)" };
+        return { ok: false, events: count, firstBadSeq: seq, reason: "chain broken (prev_hash mismatch)" };
       }
-      if (hashEvent(body as Record<string, unknown>) !== hash) {
-        return { ok: false, events: count, firstBadSeq: event.seq, reason: "event content altered (hash mismatch)" };
+      const { hash, ...body } = withSrc;
+      if (hashEvent(body) !== hash) {
+        return { ok: false, events: count, firstBadSeq: seq, reason: "event content altered (hash mismatch)" };
       }
-      prev = hash;
+      prev = hash as string;
       count += 1;
+      lastType = event.type;
     }
-    return { ok: true, events: count, firstBadSeq: null, reason: null };
+    if (count === 0) return { ok: false, events: 0, firstBadSeq: null, reason: "empty session" };
+    return { ok: true, events: count, firstBadSeq: null, reason: null, sealed: lastType === "session_end" };
   }
 
   sessions(): Array<{ session_id: string; name: string; started: number; events: number; verified: boolean }> {

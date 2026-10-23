@@ -1,19 +1,22 @@
 """External timestamp anchoring.
 
-Hash-chaining proves a trace wasn't edited *after* writing — but not
-*when* it was written. An operator could fabricate an entire chain after
-an incident. Anchoring fixes this: we submit the chain head hash to an
-external RFC 3161 Time-Stamp Authority (TSA), which returns a signed
-token proving the hash existed at that moment. Any events recorded
-before the anchor point can no longer be backdated or rewritten wholesale.
+Hash-chaining proves a trace wasn't edited *after* writing, but not *when*
+it was written: whoever holds the file could regenerate the whole chain.
+Anchoring closes that gap. The chain head hash is sent to an external
+RFC 3161 Time-Stamp Authority (TSA), which returns a signed token proving
+that exact hash existed at that moment.
 
-RFC 3161 support uses the optional `rfc3161ng` package:
+Verification checks the token itself, not just the local record: the
+token's signature must chain to a CA in the verifier's trust store, and its
+message imprint must equal SHA-256 of the chain hash at the anchored seq.
+Editing the anchor JSON, swapping in another token or rewriting the chain
+all fail.
 
     pip install "echotrail[anchor]"
-    echotrail anchor SESSION_ID
+    echotrail anchor SESSION_ID          # default TSA: DigiCert (public root)
 
-Without it, a local anchor record is still written (useful for manual
-publication of the hash — e.g. in a tweet, email, or internal ledger).
+Without rfc3161ng a *local* anchor record is written. It is a reminder to
+publish the hash somewhere public, not proof: it is reported as such.
 """
 
 from __future__ import annotations
@@ -24,9 +27,17 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
+from ._tsverify import verify_timestamp_token
 from .store import TraceStore
 
-DEFAULT_TSA = "https://freetsa.org/tsr"
+# DigiCert's TSA certificate chains to a root in standard trust stores, so
+# tokens verify out of the box. (freetsa.org uses a private root and will
+# not verify unless you add its CA with --tsa-ca.)
+DEFAULT_TSA = "http://timestamp.digicert.com"
+
+
+class AnchorError(RuntimeError):
+    pass
 
 
 def chain_head(store: TraceStore, session_id: str) -> tuple[int, str]:
@@ -53,9 +64,13 @@ def create_anchor(
 ) -> dict[str, Any]:
     """Anchor the current chain head. Returns the anchor record.
 
-    `_timestamper` is injectable for testing; by default an RFC 3161
-    request is sent to `tsa_url` via the optional rfc3161ng package.
+    `_timestamper` is injectable for testing; it receives the chain hash
+    (hex, as bytes) and must return a DER RFC 3161 TimeStampToken.
+    Raises AnchorError if the TSA cannot be reached.
     """
+    v = store.verify(session_id)
+    if not v.ok:
+        raise AnchorError(f"refusing to anchor a chain that does not verify: {v.reason}")
     seq, head_hash = chain_head(store, session_id)
     record: dict[str, Any] = {
         "session_id": session_id,
@@ -70,20 +85,24 @@ def create_anchor(
     if timestamper is None:
         try:
             import rfc3161ng  # type: ignore
-
-            rt = rfc3161ng.RemoteTimestamper(tsa_url, hashname="sha256")
-            timestamper = lambda data: rt.timestamp(data=data)  # noqa: E731
-            record["tsa_url"] = tsa_url
         except ImportError:
-            timestamper = None
+            rfc3161ng = None
+        if rfc3161ng is not None:
+            rt = rfc3161ng.RemoteTimestamper(tsa_url, hashname="sha256", include_tsa_certificate=True)
+
+            def timestamper(data: bytes) -> bytes:
+                try:
+                    return rt.timestamp(data=data)
+                except Exception as e:  # network, HTTP or TSA errors
+                    raise AnchorError(f"could not get a timestamp from {tsa_url}: {e}") from None
 
     if timestamper is not None:
-        tsr = timestamper(head_hash.encode())
+        token = timestamper(head_hash.encode())
         record["method"] = "rfc3161"
-        record["tsa_url"] = record["tsa_url"] or tsa_url
-        record["tsr_b64"] = base64.b64encode(bytes(tsr)).decode()
+        record["tsa_url"] = tsa_url
+        record["token_b64"] = base64.b64encode(bytes(token)).decode()
 
-    path = _anchor_dir(store) / f"{session_id}.{int(time.time())}.json"
+    path = _anchor_dir(store) / f"{session_id}.{int(time.time() * 1000)}.json"
     path.write_text(json.dumps(record, indent=2), encoding="utf-8")
     record["_path"] = str(path)
     return record
@@ -98,27 +117,38 @@ def anchors_for(store: TraceStore, session_id: str) -> list[dict[str, Any]]:
         try:
             out.append(json.loads(p.read_text(encoding="utf-8")))
         except Exception:
-            continue
+            out.append({"anchored_seq": None, "created_at": "?", "method": "corrupt", "_file": p.name})
     return out
 
 
-def check_anchors(store: TraceStore, session_id: str) -> list[dict[str, Any]]:
-    """Check each anchor against the live chain.
+def check_anchor(record: dict[str, Any], events_by_seq: dict[int, dict[str, Any]],
+                 ca_file: str | None = None) -> dict[str, Any]:
+    """Check one anchor record against the chain.
 
-    An anchor is OK if the event at `anchored_seq` still carries
-    `anchored_hash`. A mismatch means history before the anchor point was
-    rewritten after the anchor was created.
+    ok:       True  - chain matches and (for rfc3161) the TSA token verifies
+              False - mismatch or invalid token: history was rewritten
+              None  - local anchor, or token could not be checked here
     """
-    events = {e["seq"]: e for e in store.read(session_id)}
-    results = []
-    for a in anchors_for(store, session_id):
-        ev = events.get(a["anchored_seq"])
-        ok = ev is not None and ev.get("hash") == a["anchored_hash"]
-        results.append({
-            "anchored_seq": a["anchored_seq"],
-            "created_at": a["created_at"],
-            "method": a["method"],
-            "ok": ok,
-            "reason": None if ok else "chain at anchored seq no longer matches anchored hash",
-        })
-    return results
+    base = {"anchored_seq": record.get("anchored_seq"), "created_at": record.get("created_at"),
+            "method": record.get("method"), "gen_time": None, "tsa": None}
+    if record.get("method") == "corrupt":
+        return {**base, "ok": False, "reason": f"anchor file {record.get('_file')} is unreadable"}
+    ev = events_by_seq.get(record.get("anchored_seq"))
+    if ev is None or ev.get("hash") != record.get("anchored_hash"):
+        return {**base, "ok": False, "reason": "chain at anchored seq no longer matches anchored hash"}
+    if record.get("method") == "rfc3161":
+        token = record.get("token_b64") or record.get("tsr_b64")
+        if not token:
+            return {**base, "ok": False, "reason": "rfc3161 anchor has no token"}
+        r = verify_timestamp_token(token, ev["hash"], ca_file)
+        return {**base, "ok": r["ok"], "reason": r["reason"], "gen_time": r["gen_time"], "tsa": r["tsa"]}
+    return {**base, "ok": None,
+            "reason": "local anchor only: proves nothing unless the hash was published elsewhere"}
+
+
+def check_anchors(store: TraceStore, session_id: str, ca_file: str | None = None) -> list[dict[str, Any]]:
+    try:
+        events = {e["seq"]: e for e in store.read(session_id)}
+    except Exception:
+        events = {}
+    return [check_anchor(a, events, ca_file) for a in anchors_for(store, session_id)]
