@@ -2,13 +2,13 @@
 
 Sits between an MCP client (Claude Desktop, Claude Code, any agent
 framework) and an MCP server over stdio, relaying JSON-RPC messages
-untouched while recording them into a tamper-evident echotrail trace.
+untouched while recording them into a tamper-evident wakeprint trace.
 
 The agent needs NO code changes. In the client's MCP config, wrap the
 real server command:
 
-    { "command": "echotrail",
-      "args": ["mcp-proxy", "--root", "/var/echotrail/traces",
+    { "command": "wakeprint",
+      "args": ["mcp-proxy", "--root", "/var/wakeprint/traces",
                "--name", "github-mcp", "--",
                "npx", "-y", "@modelcontextprotocol/server-github"] }
 
@@ -89,7 +89,7 @@ class MCPProxy:
                         else:
                             self._log_server_msg(s, msg)
                     except Exception as e:  # recording must never break the agent
-                        print(f"echotrail: record error: {e}", file=sys.stderr)
+                        print(f"wakeprint: record error: {e}", file=sys.stderr)
                 dst.write(line)
                 dst.flush()
         except (BrokenPipeError, ValueError, OSError):
@@ -121,6 +121,6 @@ class MCPProxy:
 
 def main(root: str, name: str | None, command: list[str]) -> int:
     if not command:
-        print("usage: echotrail mcp-proxy [--name NAME] -- <server command...>", file=sys.stderr)
+        print("usage: wakeprint mcp-proxy [--name NAME] -- <server command...>", file=sys.stderr)
         return 2
     return MCPProxy(root, name or f"mcp:{command[0]}", command).run()

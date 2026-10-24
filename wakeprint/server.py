@@ -1,6 +1,6 @@
 """Replay & forensics web UI.
 
-Run:  python -m echotrail.server --root ./traces --port 8377
+Run:  python -m wakeprint.server --root ./traces --port 8377
 Then open http://127.0.0.1:8377
 """
 
@@ -15,7 +15,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from .causal import causal_analysis
 from .store import TraceStore
 
-app = FastAPI(title="echotrail")
+app = FastAPI(title="wakeprint")
 _store: TraceStore | None = None
 
 
@@ -57,7 +57,7 @@ PAGE = """<!doctype html>
 <html>
 <head>
 <meta charset="utf-8">
-<title>echotrail — agent flight recorder</title>
+<title>wakeprint — agent flight recorder</title>
 <style>
   :root { --bg:#0d1117; --panel:#161b22; --line:#30363d; --text:#e6edf3; --dim:#8b949e;
           --ok:#3fb950; --bad:#f85149; --warn:#d29922; --acc:#58a6ff; }
@@ -106,7 +106,7 @@ PAGE = """<!doctype html>
 </style>
 </head>
 <body>
-<header><h1>&#9992; echotrail</h1><span>agent flight recorder &amp; forensics — MVP</span></header>
+<header><h1>&#9992; wakeprint</h1><span>agent flight recorder &amp; forensics — MVP</span></header>
 <div class="wrap">
   <div id="list"></div>
   <div id="main"><div class="empty">Select a session to replay it.</div></div>
@@ -191,7 +191,7 @@ def index() -> str:
 
 def main() -> None:
     global _store
-    parser = argparse.ArgumentParser(description="echotrail replay UI")
+    parser = argparse.ArgumentParser(description="wakeprint replay UI")
     parser.add_argument("--root", default="./traces")
     parser.add_argument("--port", type=int, default=8377)
     parser.add_argument("--host", default="127.0.0.1")

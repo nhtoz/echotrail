@@ -1,8 +1,10 @@
-# echotrail 👣
+# wakeprint 👣
 
-**Every agent leaves a trail. echotrail is the black box for AI agents.** Tamper-evident recording of everything your agent saw and did — prompts, model responses, tool calls — with causal incident tracing, court-grade evidence export, and a replay UI.
+**Every agent leaves a trail. wakeprint is the black box for AI agents.** Tamper-evident recording of everything your agent saw and did — prompts, model responses, tool calls — with causal incident tracing, court-grade evidence export, and a replay UI.
 
-Over half of production AI agents run with no logging. When one leaks data or takes a harmful action, nobody can reconstruct why. echotrail is the flight recorder: prevention tools assume attacks can be stopped; echotrail assumes some will land, and makes sure you can prove exactly what happened.
+Over half of production AI agents run with no logging. When one leaks data or takes a harmful action, nobody can reconstruct why. wakeprint is the flight recorder: prevention tools assume attacks can be stopped; wakeprint assumes some will land, and makes sure you can prove exactly what happened.
+
+> **Renamed from `echotrail`.** Versions 0.12–0.13 were published as `echotrail`. Replace `echotrail` with `wakeprint` in imports, CLI commands and MCP configs. The trace format is unchanged, so existing traces, anchors and evidence bundles still verify.
 
 ## Why it's different
 
@@ -25,7 +27,7 @@ pip install -e ".[otel]"         # + OpenTelemetry export
 
 ```bash
 python examples/demo_agent.py    # writes demo traces incl. a simulated injection incident
-echotrail serve                  # replay UI at http://127.0.0.1:8377
+wakeprint serve                  # replay UI at http://127.0.0.1:8377
 ```
 
 The demo shows a clean session and an injection incident: red-flagged events, an incident panel tracing the poisoned ticket to the exfiltration email, and integrity badges that flip to TAMPERED if you edit a trace file by hand.
@@ -35,7 +37,7 @@ The demo shows a clean session and an injection incident: red-flagged events, an
 ### SDK (3 lines)
 
 ```python
-from echotrail import Recorder
+from wakeprint import Recorder
 
 rec = Recorder(root="./traces")
 with rec.session("support-agent run", config={
@@ -55,7 +57,7 @@ Streaming responses are relayed chunk-by-chunk to your code while the assembled 
 ### TypeScript / Node (`js/`)
 
 ```ts
-import { Recorder } from "echotrail";
+import { Recorder } from "wakeprint";
 
 const rec = new Recorder("./traces");
 await rec.session("my-agent run", { config: { model: "gpt-x" } }, async (s) => {
@@ -71,8 +73,8 @@ Traces are byte-compatible across languages: a session written from Node is veri
 Wrap any stdio MCP server in your client's config — Claude Desktop, Claude Code, or any framework:
 
 ```json
-{ "command": "echotrail",
-  "args": ["mcp-proxy", "--root", "/var/echotrail/traces", "--name", "github-mcp", "--",
+{ "command": "wakeprint",
+  "args": ["mcp-proxy", "--root", "/var/wakeprint/traces", "--name", "github-mcp", "--",
            "npx", "-y", "@modelcontextprotocol/server-github"] }
 ```
 
@@ -81,15 +83,15 @@ All JSON-RPC traffic is relayed untouched and recorded; injection scanning and c
 ## CLI
 
 ```
-echotrail list                        sessions with integrity status + risk score
-echotrail verify SESSION_ID | --all   verify hash chain + anchors (exit 1 on tamper — CI friendly)
+wakeprint list                        sessions with integrity status + risk score
+wakeprint verify SESSION_ID | --all   verify hash chain + anchors (exit 1 on tamper — CI friendly)
               [--tsa-ca CA.pem]       also check RFC 3161 token signatures (needs openssl)
-echotrail serve                       replay UI
-echotrail incident SESSION_ID         causal trace: injection origin -> downstream actions
-echotrail export SESSION_ID           self-verifying evidence zip (chain of custody)
-echotrail anchor SESSION_ID           RFC 3161 external timestamp of the chain head
-echotrail otel SESSION_ID             export session as OpenTelemetry spans
-echotrail siem SESSION_ID             ECS (default) or --format ocsf NDJSON for your SIEM
+wakeprint serve                       replay UI
+wakeprint incident SESSION_ID         causal trace: injection origin -> downstream actions
+wakeprint export SESSION_ID           self-verifying evidence zip (chain of custody)
+wakeprint anchor SESSION_ID           RFC 3161 external timestamp of the chain head
+wakeprint otel SESSION_ID             export session as OpenTelemetry spans
+wakeprint siem SESSION_ID             ECS (default) or --format ocsf NDJSON for your SIEM
 ```
 
 ### Example: incident trace
@@ -108,7 +110,7 @@ Every link cites the exact token and where it appeared — an investigator can c
 
 ### Example: evidence bundle
 
-`echotrail export` produces `<session>_evidence.zip` containing the trace, a manifest (sha256, verification state, flagged events), the session's anchor records, and a dependency-free `verify.py`:
+`wakeprint export` produces `<session>_evidence.zip` containing the trace, a manifest (sha256, verification state, flagged events), the session's anchor records, and a dependency-free `verify.py`:
 
 ```
 $ python verify.py --tsa-ca freetsa_cacert.pem
@@ -123,7 +125,7 @@ Without `--tsa-ca`, the verifier still checks that each RFC 3161 token timestamp
 
 ### SIEM export
 
-`echotrail siem SESSION_ID` writes one NDJSON record per event in Elastic Common Schema 8.11; `--format ocsf` writes OCSF 1.1 API Activity records plus a Detection Finding for every flagged event. Each record carries the event's `seq`, `hash`, `prev_hash`, the session's chain-verification result, and taint links back to the injection origin.
+`wakeprint siem SESSION_ID` writes one NDJSON record per event in Elastic Common Schema 8.11; `--format ocsf` writes OCSF 1.1 API Activity records plus a Detection Finding for every flagged event. Each record carries the event's `seq`, `hash`, `prev_hash`, the session's chain-verification result, and taint links back to the injection origin.
 
 ### Cross-language hashing
 

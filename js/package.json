@@ -1,6 +1,6 @@
 {
-  "name": "echotrail",
-  "version": "0.13.0",
+  "name": "wakeprint",
+  "version": "0.14.0",
   "description": "Flight recorder & forensics for AI agents — tamper-evident traces, trace-compatible with the Python package",
   "type": "module",
   "main": "./build/src/index.js",

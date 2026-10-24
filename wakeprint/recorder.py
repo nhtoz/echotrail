@@ -2,7 +2,7 @@
 
 Usage:
 
-    from echotrail import Recorder
+    from wakeprint import Recorder
 
     rec = Recorder(root="./traces")
     with rec.session("support-agent run") as s:
@@ -281,7 +281,7 @@ class _RecordingStreamManager:
         try:
             self._rs._finish(error)
         except Exception as e:  # recording must never break the agent's stream
-            print(f"echotrail: record error: {e}", file=sys.stderr)
+            print(f"wakeprint: record error: {e}", file=sys.stderr)
 
     def __exit__(self, *exc: Any) -> Any:
         self._finish(exc[1])

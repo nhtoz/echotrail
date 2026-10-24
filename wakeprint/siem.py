@@ -3,8 +3,8 @@
 One NDJSON line per trace event, ready for Elastic/Logstash, Splunk,
 Sentinel, Security Lake or any OCSF-aware pipeline:
 
-    echotrail siem SESSION_ID                    # ECS 8.11 to stdout
-    echotrail siem SESSION_ID --format ocsf -o session.ocsf.ndjson
+    wakeprint siem SESSION_ID                    # ECS 8.11 to stdout
+    wakeprint siem SESSION_ID --format ocsf -o session.ocsf.ndjson
 
 Every record carries the event's seq, hash and prev_hash plus the
 session's chain-verification result, so a SIEM alert can always be traced
@@ -63,7 +63,7 @@ def _severity_rank(e: dict[str, Any]) -> int:
     return max((_SEV_RANK.get(f.get("severity"), 0) for f in flags), default=0)
 
 
-def _echotrail_fields(e: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
+def _wakeprint_fields(e: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
     p = _payload(e)
     flags = p.get("_flags") or []
     out: dict[str, Any] = {
@@ -95,7 +95,7 @@ def _iso(ts: float) -> str:
 def _summary(e: dict[str, Any]) -> str:
     p = _payload(e)
     what = p.get("tool") or p.get("provider") or p.get("method") or ""
-    return f"echotrail {e['type']}" + (f" {what}" if what else "") + f" (seq {e['seq']})"
+    return f"wakeprint {e['type']}" + (f" {what}" if what else "") + f" (seq {e['seq']})"
 
 
 # -- ECS ---------------------------------------------------------------------
@@ -116,7 +116,7 @@ def _ecs_category(e: dict[str, Any]) -> tuple[list[str], list[str]]:
 def to_ecs(e: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
     flagged = bool(_payload(e).get("_flags"))
     cat, typ = _ecs_category(e)
-    et = _echotrail_fields(e, ctx)
+    et = _wakeprint_fields(e, ctx)
     rec: dict[str, Any] = {
         "@timestamp": _iso(e["ts"]),
         "ecs": {"version": ECS_VERSION},
@@ -126,23 +126,23 @@ def to_ecs(e: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
             "category": cat,
             "type": typ,
             "action": e["type"],
-            "dataset": "echotrail.trace",
-            "module": "echotrail",
-            "provider": "echotrail",
+            "dataset": "wakeprint.trace",
+            "module": "wakeprint",
+            "provider": "wakeprint",
             "id": f"{ctx['session_id']}:{e['seq']}",
             "sequence": e["seq"],
             "hash": e["hash"],
             "severity": _ECS_SEVERITY[_severity_rank(e)],
             "outcome": "failure" if e["type"].endswith("_error") else "unknown",
         },
-        "observer": {"product": "echotrail", "vendor": "echotrail", "version": __version__, "type": "agent-recorder"},
-        "labels": {"echotrail_session_id": ctx["session_id"]},
-        "tags": ["echotrail", "ai-agent"] + (["prompt-injection"] if flagged else []),
-        "echotrail": et,
+        "observer": {"product": "wakeprint", "vendor": "wakeprint", "version": __version__, "type": "agent-recorder"},
+        "labels": {"wakeprint_session_id": ctx["session_id"]},
+        "tags": ["wakeprint", "ai-agent"] + (["prompt-injection"] if flagged else []),
+        "wakeprint": et,
     }
     if flagged:
         rec["event"]["risk_score"] = float(et["risk"])
-        rec["rule"] = {"name": ", ".join(et["verdicts"]), "ruleset": "echotrail-injection-heuristics"}
+        rec["rule"] = {"name": ", ".join(et["verdicts"]), "ruleset": "wakeprint-injection-heuristics"}
     return rec
 
 
@@ -151,11 +151,11 @@ def to_ecs(e: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
 def _ocsf_metadata(e: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
     return {
         "version": OCSF_VERSION,
-        "product": {"name": "echotrail", "vendor_name": "echotrail", "version": __version__},
+        "product": {"name": "wakeprint", "vendor_name": "wakeprint", "version": __version__},
         "uid": f"{ctx['session_id']}:{e['seq']}",
         "correlation_uid": ctx["session_id"],
         "sequence": e["seq"],
-        "log_name": "echotrail.trace",
+        "log_name": "wakeprint.trace",
     }
 
 
@@ -164,7 +164,7 @@ def to_ocsf(e: dict[str, Any], ctx: dict[str, Any]) -> list[dict[str, Any]]:
     rank = _severity_rank(e)
     failed = e["type"].endswith("_error")
     time_ms = int(e["ts"] * 1000)
-    et = _echotrail_fields(e, ctx)
+    et = _wakeprint_fields(e, ctx)
     operation = p.get("tool") or (f"llm.{p['provider']}" if p.get("provider") else None) or p.get("method") or e["type"]
 
     activity = {
@@ -178,9 +178,9 @@ def to_ocsf(e: dict[str, Any], ctx: dict[str, Any]) -> list[dict[str, Any]]:
         "message": _summary(e),
         "metadata": _ocsf_metadata(e, ctx),
         "actor": {"app_name": ctx["session_name"] or "ai-agent"},
-        "api": {"operation": operation, "service": {"name": "echotrail"}},
+        "api": {"operation": operation, "service": {"name": "wakeprint"}},
         "src_endpoint": {"name": "ai-agent"},
-        "unmapped": {"echotrail": et},
+        "unmapped": {"wakeprint": et},
     }
     out = [activity]
     if p.get("_flags"):
@@ -200,10 +200,10 @@ def to_ocsf(e: dict[str, Any], ctx: dict[str, Any]) -> list[dict[str, Any]]:
                 "title": ", ".join(et["verdicts"]),
                 "types": et["verdicts"],
                 "desc": "; ".join(et["matches"]),
-                "analytic": {"name": "echotrail injection heuristics", "type_id": 1, "type": "Rule"},
+                "analytic": {"name": "wakeprint injection heuristics", "type_id": 1, "type": "Rule"},
                 "related_events": [{"uid": f"{ctx['session_id']}:{e['seq']}"}],
             },
-            "unmapped": {"echotrail": et},
+            "unmapped": {"wakeprint": et},
         })
     return out
 

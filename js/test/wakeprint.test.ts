@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { Recorder, TraceStore, scanText, riskScore } from "../src/index.js";
 
 function tmpdir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "echotrail-"));
+  return fs.mkdtempSync(path.join(os.tmpdir(), "wakeprint-"));
 }
 
 test("chain verifies and tampering is detected", () => {

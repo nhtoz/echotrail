@@ -9,8 +9,8 @@ before the anchor point can no longer be backdated or rewritten wholesale.
 
 RFC 3161 support uses the optional `rfc3161ng` package:
 
-    pip install "echotrail[anchor]"
-    echotrail anchor SESSION_ID
+    pip install "wakeprint[anchor]"
+    wakeprint anchor SESSION_ID
 
 Without it, a local anchor record is still written (useful for manual
 publication of the hash — e.g. in a tweet, email, or internal ledger).
