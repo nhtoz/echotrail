@@ -92,6 +92,7 @@ def create_anchor(
 
 
 def anchors_for(store: TraceStore, session_id: str) -> list[dict[str, Any]]:
+    store._path(session_id)  # rejects ids that would glob outside the store
     d = store.root / "anchors"
     if not d.exists():
         return []

@@ -55,6 +55,11 @@ def cmd_verify(store: TraceStore, session_id: str | None, verify_all: bool, tsa_
 
 
 def main() -> None:
+    # piped output on Windows defaults to the ANSI code page, which can't
+    # encode session names or payload text in most scripts
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
     parser = argparse.ArgumentParser(prog="wakeprint", description="Flight recorder & forensics for AI agents")
     parser.add_argument("--root", default="./traces", help="trace store directory (default ./traces)")
     sub = parser.add_subparsers(dest="cmd", required=True)

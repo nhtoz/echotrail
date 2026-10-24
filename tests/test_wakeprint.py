@@ -1,4 +1,5 @@
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -894,3 +895,63 @@ def test_stream_error_still_recorded(tmp_path):
                 raise RuntimeError("connection dropped")
     resp = [e for e in rec.store.read(s.session_id) if e["type"] == "llm_response"]
     assert len(resp) == 1 and resp[0]["payload"]["error"] == "connection dropped"
+
+
+# -- hardening found by the PyPI end-to-end run (0.14.1) ------------------------------
+
+@pytest.mark.parametrize("bad", ["../outside", "..\\outside", "a/b", "a\\b", "", ".hidden", "x" * 200])
+def test_session_ids_cannot_escape_the_store(tmp_path, bad):
+    (tmp_path / "outside.jsonl").write_text("{}\n")
+    store = TraceStore(tmp_path / "traces")
+    with pytest.raises(FileNotFoundError):
+        list(store.read(bad))
+    from wakeprint.anchor import anchors_for
+    with pytest.raises(FileNotFoundError):
+        anchors_for(store, bad)
+
+
+def test_replay_api_returns_404_for_traversal_ids(tmp_path):
+    from fastapi import HTTPException
+    from wakeprint import server
+
+    (tmp_path / "outside.jsonl").write_text(json.dumps({"seq": 0, "name": "SECRET"}) + "\n")
+    server._store = TraceStore(tmp_path / "traces")
+    try:
+        for bad in ("..\\outside", "../outside"):
+            with pytest.raises(HTTPException) as exc:
+                server.session_detail(bad)
+            assert exc.value.status_code == 404
+    finally:
+        server._store = None
+
+
+def test_cli_output_is_utf8_when_piped(tmp_path):
+    import subprocess
+    rec = Recorder(root=tmp_path)
+    with rec.session("客服代理 — run") as s:
+        s.log("tool_call", tool="x")
+    r = subprocess.run([sys.executable, "-m", "wakeprint.cli", "--root", str(tmp_path), "list"],
+                       capture_output=True, cwd=str(Path(__file__).resolve().parents[1]),
+                       env={k: v for k, v in os.environ.items() if k != "PYTHONIOENCODING"})
+    assert r.returncode == 0, r.stderr.decode("utf-8", "replace")
+    assert "客服代理 — run" in r.stdout.decode("utf-8")
+
+
+def test_mcp_proxy_exits_cleanly_when_server_dies_first(tmp_path):
+    import subprocess
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "wakeprint.cli", "--root", str(tmp_path), "mcp-proxy", "--",
+         sys.executable, "-c", "import sys; sys.exit(3)"],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        cwd=str(Path(__file__).resolve().parents[1]))
+    try:
+        proc.wait(timeout=20)  # stdin stays open: the client is still connected
+        err = proc.stderr.read()
+    finally:
+        proc.kill()
+        proc.stdin.close()
+    assert b"Fatal Python error" not in err
+    assert proc.returncode == 3
+    sid = TraceStore(tmp_path).sessions()[0]["session_id"]
+    exits = [e for e in TraceStore(tmp_path).read(sid) if e["type"] == "mcp_proxy_exit"]
+    assert exits and exits[0]["payload"]["exit_code"] == 3

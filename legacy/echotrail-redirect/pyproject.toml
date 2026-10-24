@@ -3,7 +3,7 @@ name = "echotrail"
 version = "0.14.0"
 description = "Renamed to wakeprint. This release installs wakeprint and keeps `import echotrail` working."
 readme = "README.md"
-license = {text = "MIT"}
+license = "MIT"
 authors = [{name = "Nihat Öz", email = "nihatoz@gmail.com"}]
 requires-python = ">=3.10"
 dependencies = ["wakeprint>=0.14.0"]
@@ -17,7 +17,7 @@ Repository = "https://github.com/nhtoz/wakeprint"
 echotrail = "echotrail._cli:main"
 
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]

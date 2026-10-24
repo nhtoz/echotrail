@@ -20,6 +20,7 @@ a poisoned tool result is flagged in the trace exactly like SDK capture.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import threading
@@ -116,6 +117,7 @@ class MCPProxy:
             code = child.wait()
             t_down.join(timeout=2)
             s.log("mcp_proxy_exit", exit_code=code)
+        self.client_still_open = t_up.is_alive()
         return code
 
 
@@ -123,4 +125,13 @@ def main(root: str, name: str | None, command: list[str]) -> int:
     if not command:
         print("usage: wakeprint mcp-proxy [--name NAME] -- <server command...>", file=sys.stderr)
         return 2
-    return MCPProxy(root, name or f"mcp:{command[0]}", command).run()
+    proxy = MCPProxy(root, name or f"mcp:{command[0]}", command)
+    code = proxy.run()
+    if proxy.client_still_open:
+        # the server exited first, so the client->server thread is still
+        # blocked reading stdin; a normal interpreter shutdown would crash on
+        # that lock, so leave directly with the server's exit code
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os._exit(code)
+    return code

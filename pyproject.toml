@@ -1,9 +1,9 @@
 [project]
 name = "wakeprint"
-version = "0.14.0"
+version = "0.14.1"
 description = "Flight recorder & forensics for AI agents — tamper-evident traces, replay, injection highlighting"
 readme = "README.md"
-license = {text = "MIT"}
+license = "MIT"
 authors = [{name = "Nihat Öz", email = "nihatoz@gmail.com"}]
 requires-python = ">=3.10"
 dependencies = ["fastapi>=0.110", "uvicorn>=0.29"]
@@ -21,7 +21,7 @@ otel = ["opentelemetry-sdk>=1.25", "opentelemetry-exporter-otlp-proto-http>=1.25
 wakeprint = "wakeprint.cli:main"
 
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]

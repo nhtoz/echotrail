@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import threading
 import time
 import uuid
@@ -20,6 +21,7 @@ from typing import Any, Iterator
 from .canonical import canonical as _canonical, canonical_legacy as _canonical_legacy
 
 GENESIS = "0" * 64
+_SESSION_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}")
 
 # One lock per session file, shared by every TraceStore in the process, so
 # concurrent writers (e.g. the MCP proxy's two relay threads) can't both
@@ -138,6 +140,10 @@ class TraceStore:
     # -- internals -------------------------------------------------------
 
     def _path(self, session_id: str) -> Path:
+        # session ids reach here from URLs and CLI args; anything that could
+        # name a file outside the store (separators, "..") cannot exist in it
+        if not isinstance(session_id, str) or not _SESSION_ID.fullmatch(session_id) or ".." in session_id:
+            raise FileNotFoundError(f"invalid session id: {session_id!r}")
         return self.root / f"{session_id}.jsonl"
 
     def _last_event(self, path: Path) -> dict[str, Any]:
