@@ -1,0 +1,61 @@
+name: publish
+# Publishes wakeprint and the echotrail redirect package to PyPI with
+# Trusted Publishing (no API tokens). Each PyPI project lists this repo,
+# workflow file and the `pypi` environment as a trusted publisher.
+# Versions already on PyPI are skipped, so re-running is safe.
+on:
+  workflow_dispatch:
+  release:
+    types: [published]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install build twine
+      - run: python -m build --outdir out/wakeprint .
+      - run: python -m build --outdir out/echotrail legacy/echotrail-redirect
+      - run: twine check out/wakeprint/* out/echotrail/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wakeprint
+          path: out/wakeprint/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: echotrail
+          path: out/echotrail/
+
+  publish-wakeprint:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: wakeprint
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true
+
+  # the redirect release depends on wakeprint, so it goes second
+  publish-echotrail:
+    needs: publish-wakeprint
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: echotrail
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true
