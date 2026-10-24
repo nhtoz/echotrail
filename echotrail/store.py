@@ -10,17 +10,28 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import threading
 import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator
 
+from .canonical import canonical as _canonical, canonical_legacy as _canonical_legacy
+
 GENESIS = "0" * 64
 
+# One lock per session file, shared by every TraceStore in the process, so
+# concurrent writers (e.g. the MCP proxy's two relay threads) can't both
+# read the same chain head and fork the chain.
+_file_locks: dict[str, threading.Lock] = {}
+_file_locks_guard = threading.Lock()
 
-def _canonical(obj: dict[str, Any]) -> bytes:
-    return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+
+def _lock_for(path: Path) -> threading.Lock:
+    key = os.path.normcase(os.path.abspath(path))
+    with _file_locks_guard:
+        return _file_locks.setdefault(key, threading.Lock())
 
 
 @dataclass
@@ -59,20 +70,21 @@ class TraceStore:
 
     def append(self, session_id: str, event_type: str, payload: dict[str, Any]) -> dict[str, Any]:
         path = self._path(session_id)
-        last = self._last_event(path)
-        event = {
-            "seq": last["seq"] + 1,
-            "type": event_type,
-            "ts": time.time(),
-            "session_id": session_id,
-            "payload": payload,
-            "prev_hash": last["hash"],
-        }
-        event["hash"] = self._hash_event(event)
-        with open(path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(event, ensure_ascii=False) + "\n")
-            f.flush()
-            os.fsync(f.fileno())
+        with _lock_for(path):
+            last = self._last_event(path)
+            event = {
+                "seq": last["seq"] + 1,
+                "type": event_type,
+                "ts": time.time(),
+                "session_id": session_id,
+                "payload": payload,
+                "prev_hash": last["hash"],
+            }
+            event["hash"] = self._hash_event(event)
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(event, ensure_ascii=False) + "\n")
+                f.flush()
+                os.fsync(f.fileno())
         return event
 
     # -- reading ---------------------------------------------------------
@@ -117,7 +129,7 @@ class TraceStore:
             body = {k: v for k, v in event.items() if k != "hash"}
             if event.get("prev_hash") != prev_hash:
                 return VerificationResult(False, count, event.get("seq"), "chain broken (prev_hash mismatch)")
-            if self._hash_event(body) != claimed:
+            if not self.hash_matches(body, claimed):
                 return VerificationResult(False, count, event.get("seq"), "event content altered (hash mismatch)")
             prev_hash = claimed
             count += 1
@@ -141,3 +153,11 @@ class TraceStore:
     @staticmethod
     def _hash_event(body: dict[str, Any]) -> str:
         return hashlib.sha256(_canonical(body)).hexdigest()
+
+    @staticmethod
+    def hash_matches(body: dict[str, Any], claimed: str | None) -> bool:
+        """True if `claimed` is the event hash under the current canonical
+        form, or under the pre-v0.13 form that older traces were written with."""
+        if hashlib.sha256(_canonical(body)).hexdigest() == claimed:
+            return True
+        return hashlib.sha256(_canonical_legacy(body)).hexdigest() == claimed

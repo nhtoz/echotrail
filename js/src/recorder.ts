@@ -109,6 +109,23 @@ export class Session {
               return response;
             };
           }
+          if (prop === "stream" && typeof value === "function") {
+            // Anthropic messages.stream() / OpenAI chat.completions.stream(): the
+            // helper object is returned untouched; its final-result promise logs
+            // one llm_response when the stream completes.
+            return (kwargs: Record<string, unknown>) => {
+              session.log("llm_request", { provider, streamed: true, request: safe(kwargs) as Record<string, unknown> });
+              const stream = (value as AnyFn).call(t, kwargs) as Record<string, unknown>;
+              const final = stream && (stream.finalMessage ?? stream.finalChatCompletion);
+              if (typeof final === "function") {
+                Promise.resolve((final as AnyFn).call(stream)).then(
+                  (r: unknown) => session.log("llm_response", { provider, streamed: true, response: safe(r) }),
+                  (e: unknown) => session.log("llm_response", { provider, streamed: true, error: String(e) }),
+                );
+              }
+              return stream;
+            };
+          }
           if (typeof value === "function") return value.bind(t);
           if (value !== null && typeof value === "object") return makeProxy(value);
           return value;

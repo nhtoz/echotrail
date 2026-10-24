@@ -4,6 +4,7 @@
   echotrail verify SESSION_ID        verify hash chain (exit 1 on tamper — CI friendly)
   echotrail verify --all             verify every session
   echotrail serve                    start the replay UI
+  echotrail siem SESSION_ID          export ECS (default) or OCSF NDJSON for a SIEM
 """
 
 from __future__ import annotations
@@ -31,7 +32,7 @@ def cmd_list(store: TraceStore) -> int:
     return 0
 
 
-def cmd_verify(store: TraceStore, session_id: str | None, verify_all: bool) -> int:
+def cmd_verify(store: TraceStore, session_id: str | None, verify_all: bool, tsa_ca: str | None = None) -> int:
     from .anchor import check_anchors
 
     ids = [s["session_id"] for s in store.sessions()] if verify_all else [session_id]
@@ -43,9 +44,10 @@ def cmd_verify(store: TraceStore, session_id: str | None, verify_all: bool) -> i
         else:
             failed += 1
             print(f"{sid}: TAMPER DETECTED at seq {v.first_bad_seq}: {v.reason}")
-        for a in check_anchors(store, sid):
+        for a in check_anchors(store, sid, tsa_ca=tsa_ca):
             if a["ok"]:
-                print(f"  anchor @seq {a['anchored_seq']} ({a['method']}, {a['created_at']}): OK")
+                extra = f", {a['tsa_time']}, signature {a['signature']}" if a["method"] == "rfc3161" else ""
+                print(f"  anchor @seq {a['anchored_seq']} ({a['method']}, {a['created_at']}{extra}): OK")
             else:
                 failed += 1
                 print(f"  anchor @seq {a['anchored_seq']} ({a['method']}, {a['created_at']}): MISMATCH — {a['reason']}")
@@ -62,6 +64,8 @@ def main() -> None:
     p_verify = sub.add_parser("verify", help="verify hash-chain integrity")
     p_verify.add_argument("session_id", nargs="?", help="session to verify")
     p_verify.add_argument("--all", action="store_true", help="verify all sessions")
+    p_verify.add_argument("--tsa-ca", default=None,
+                          help="TSA CA certificate (PEM) to check RFC 3161 token signatures (needs openssl)")
 
     p_serve = sub.add_parser("serve", help="start the replay UI")
     p_serve.add_argument("--port", type=int, default=8377)
@@ -82,6 +86,11 @@ def main() -> None:
     p_otel.add_argument("session_id")
     p_otel.add_argument("--endpoint", default=None, help="OTLP HTTP endpoint (default: console output)")
 
+    p_siem = sub.add_parser("siem", help="export a session as ECS or OCSF NDJSON for a SIEM")
+    p_siem.add_argument("session_id")
+    p_siem.add_argument("--format", choices=["ecs", "ocsf"], default="ecs")
+    p_siem.add_argument("-o", "--out", default=None, help="output file (default: stdout)")
+
     p_mcp = sub.add_parser("mcp-proxy", help="record any MCP server's traffic with zero agent code changes")
     p_mcp.add_argument("--name", default=None, help="session name (default: mcp:<command>)")
     p_mcp.add_argument("command", nargs=argparse.REMAINDER,
@@ -95,7 +104,13 @@ def main() -> None:
     if args.cmd == "verify":
         if not args.all and not args.session_id:
             parser.error("provide SESSION_ID or --all")
-        sys.exit(cmd_verify(store, args.session_id, args.all))
+        sys.exit(cmd_verify(store, args.session_id, args.all, args.tsa_ca))
+    if args.cmd == "siem":
+        from .siem import write_ndjson
+        n = write_ndjson(store, args.session_id, args.format, args.out)
+        if args.out:
+            print(f"wrote {n} {args.format.upper()} record(s) to {args.out}")
+        sys.exit(0)
     if args.cmd == "otel":
         try:
             from .otel import export_session

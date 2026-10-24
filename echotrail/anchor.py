@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .store import TraceStore
+from .tsr import check_token, verify_signature
 
 DEFAULT_TSA = "https://freetsa.org/tsr"
 
@@ -71,7 +72,8 @@ def create_anchor(
         try:
             import rfc3161ng  # type: ignore
 
-            rt = rfc3161ng.RemoteTimestamper(tsa_url, hashname="sha256")
+            # embed the TSA cert so `openssl ts -verify` needs only the CA
+            rt = rfc3161ng.RemoteTimestamper(tsa_url, hashname="sha256", include_tsa_certificate=True)
             timestamper = lambda data: rt.timestamp(data=data)  # noqa: E731
             record["tsa_url"] = tsa_url
         except ImportError:
@@ -102,23 +104,52 @@ def anchors_for(store: TraceStore, session_id: str) -> list[dict[str, Any]]:
     return out
 
 
-def check_anchors(store: TraceStore, session_id: str) -> list[dict[str, Any]]:
-    """Check each anchor against the live chain.
+def check_anchor(a: dict[str, Any], events: dict[int, dict[str, Any]],
+                 tsa_ca: str | Path | None = None) -> dict[str, Any]:
+    """Check one anchor record against the chain (events keyed by seq).
 
-    An anchor is OK if the event at `anchored_seq` still carries
-    `anchored_hash`. A mismatch means history before the anchor point was
-    rewritten after the anchor was created.
+    1. the event at `anchored_seq` must still carry `anchored_hash`;
+    2. for RFC 3161 anchors, the token must timestamp exactly that hash —
+       so editing the anchor record to match a rewritten chain is caught;
+    3. with `tsa_ca`, the token's signature is checked against the TSA CA
+       (via openssl), so a fabricated token is caught too.
     """
+    out = {
+        "anchored_seq": a["anchored_seq"],
+        "created_at": a["created_at"],
+        "method": a["method"],
+        "ok": False,
+        "reason": None,
+        "tsa_time": None,
+        "signature": "n/a" if a["method"] != "rfc3161" else "not checked",
+    }
+    ev = events.get(a["anchored_seq"])
+    if ev is None or ev.get("hash") != a["anchored_hash"]:
+        out["reason"] = "chain at anchored seq no longer matches anchored hash"
+        return out
+    if a["method"] == "rfc3161":
+        try:
+            der = base64.b64decode(a.get("tsr_b64", ""), validate=True)
+        except ValueError:
+            der = b""
+        ok, detail = check_token(der, a["anchored_hash"])
+        if not ok:
+            out["reason"] = f"RFC 3161 token: {detail}"
+            return out
+        out["tsa_time"] = detail
+        if tsa_ca is not None:
+            sig_ok, sig_detail = verify_signature(der, a["anchored_hash"], tsa_ca)
+            if sig_ok is False:
+                out["signature"] = "invalid"
+                out["reason"] = sig_detail
+                return out
+            out["signature"] = "valid" if sig_ok else sig_detail
+    out["ok"] = True
+    return out
+
+
+def check_anchors(store: TraceStore, session_id: str,
+                  tsa_ca: str | Path | None = None) -> list[dict[str, Any]]:
+    """Check each anchor for a session against the live chain (see check_anchor)."""
     events = {e["seq"]: e for e in store.read(session_id)}
-    results = []
-    for a in anchors_for(store, session_id):
-        ev = events.get(a["anchored_seq"])
-        ok = ev is not None and ev.get("hash") == a["anchored_hash"]
-        results.append({
-            "anchored_seq": a["anchored_seq"],
-            "created_at": a["created_at"],
-            "method": a["method"],
-            "ok": ok,
-            "reason": None if ok else "chain at anchored seq no longer matches anchored hash",
-        })
-    return results
+    return [check_anchor(a, events, tsa_ca) for a in anchors_for(store, session_id)]

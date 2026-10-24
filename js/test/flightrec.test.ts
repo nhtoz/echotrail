@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { Recorder, TraceStore, scanText, riskScore } from "../src/index.js";
 
@@ -89,4 +90,49 @@ test("wrapClient records create() and streaming responses", async () => {
   const streamed = responses.find((e) => e.payload!.streamed);
   assert.equal(
     (streamed!.payload!.response as Record<string, unknown>).content, "Hello world");
+});
+
+test("Python-written trace with floats verifies in Node", () => {
+  // fixture hashes use JS number formatting (1e-7, 2, 1e+21) while the
+  // file itself was written by Python's json.dumps (1e-07, 2.0, 1e+21)
+  const dir = tmpdir();
+  // compiled to js/build/test/, so the repo root is three levels up
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const fixture = path.resolve(here, "../../../tests/fixtures/xlang_python_written.jsonl");
+  fs.copyFileSync(fixture, path.join(dir, "xlang-fixture.jsonl"));
+  const v = new TraceStore(dir).verify("xlang-fixture");
+  assert.equal(v.ok, true, v.reason ?? "");
+  assert.equal(v.events, 3);
+});
+
+test("wrapClient records Anthropic-style messages.stream()", async () => {
+  class FakeMessageStream {
+    private readonly done: Promise<unknown>;
+    constructor() {
+      this.done = Promise.resolve({ role: "assistant", content: [{ type: "text", text: "streamed" }] });
+    }
+    finalMessage() { return this.done; }
+    async *[Symbol.asyncIterator]() {
+      yield { type: "content_block_delta", delta: { type: "text_delta", text: "streamed" } };
+    }
+  }
+  const fake = { messages: { stream: (_kwargs: Record<string, unknown>) => new FakeMessageStream() } };
+
+  const rec = new Recorder(tmpdir());
+  let sid = "";
+  await rec.session("s", {}, async (s) => {
+    sid = s.sessionId;
+    const client = s.wrapClient(fake, "anthropic");
+    const stream = client.messages.stream({ model: "claude-x" });
+    for await (const _ of stream as AsyncIterable<unknown>) { /* consume */ }
+    await (stream as FakeMessageStream).finalMessage();
+    await new Promise((r) => setImmediate(r)); // let the recorder's .then() run
+  });
+  const events = rec.store.read(sid);
+  const req = events.filter((e) => e.type === "llm_request");
+  const resp = events.filter((e) => e.type === "llm_response");
+  assert.equal(req.length, 1);
+  assert.equal(resp.length, 1);
+  assert.equal(resp[0].payload!.streamed, true);
+  assert.equal(rec.store.verify(sid).ok, true);
 });

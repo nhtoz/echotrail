@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import functools
 import inspect
+import sys
 import traceback
 from contextlib import contextmanager
 from pathlib import Path
@@ -141,10 +142,15 @@ def _delta_text(chunk: Any) -> str:
                 return c
         except Exception:
             pass
-        for key in ("delta", "content_block"):  # anthropic: delta.text
-            v = d.get(key)
-            if isinstance(v, dict) and isinstance(v.get("text"), str):
-                return v["text"]
+        v = d.get("delta")  # anthropic: delta.text
+        if isinstance(v, dict) and isinstance(v.get("text"), str):
+            return v["text"]
+        # content_block_start may carry initial text; content_block_stop (from
+        # messages.stream()) repeats the whole block, so it must not count
+        v = d.get("content_block")
+        if d.get("type", "content_block_start") == "content_block_start" \
+                and isinstance(v, dict) and isinstance(v.get("text"), str):
+            return v["text"]
     return ""
 
 
@@ -190,6 +196,120 @@ class _AsyncRecordingStream:
         return getattr(self._stream, name)
 
 
+class _RecordingMessageStream:
+    """Wraps the stream object a `.stream(...)` context manager yields
+    (Anthropic `messages.stream()`, OpenAI `chat.completions.stream()`).
+
+    Events and `text_stream` pass through untouched; one llm_response is
+    logged when the context exits, preferring the SDK's own accumulated
+    snapshot over our reassembled text.
+    """
+
+    _SNAPSHOTS = ("current_message_snapshot", "current_completion_snapshot")
+
+    def __init__(self, stream: Any, session: Session, provider: str):
+        self._stream, self._session, self._provider = stream, session, provider
+        self._text: list[str] = []
+        self._chunks = 0
+        self._done = False
+
+    def __iter__(self):
+        for event in self._stream:
+            self._chunks += 1
+            self._text.append(_delta_text(event))
+            yield event
+
+    async def __aiter__(self):
+        async for event in self._stream:
+            self._chunks += 1
+            self._text.append(_delta_text(event))
+            yield event
+
+    @property
+    def text_stream(self) -> Any:
+        inner = self._stream.text_stream
+        if hasattr(inner, "__aiter__"):
+            async def agen():
+                async for text in inner:
+                    self._text.append(text)
+                    yield text
+            return agen()
+
+        def gen():
+            for text in inner:
+                self._text.append(text)
+                yield text
+        return gen()
+
+    def _finish(self, error: BaseException | None = None) -> None:
+        if self._done:
+            return
+        self._done = True
+        response: Any = None
+        for name in self._SNAPSHOTS:
+            try:
+                snap = getattr(self._stream, name)
+            except Exception:
+                continue
+            if snap is not None:
+                response = _safe(snap)
+                break
+        if response is None:
+            response = {"content": "".join(self._text)}
+        extra = {"error": str(error)} if error else {}
+        self._session.log("llm_response", provider=self._provider, streamed=True,
+                          chunk_count=self._chunks, response=response, **extra)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._stream, name)
+
+
+class _RecordingStreamManager:
+    """Wraps the context manager returned by `.stream(...)` (sync or async)."""
+
+    def __init__(self, manager: Any, session: Session, provider: str):
+        self._manager, self._session, self._provider = manager, session, provider
+        self._rs: _RecordingMessageStream | None = None
+
+    def __enter__(self) -> _RecordingMessageStream:
+        self._rs = _RecordingMessageStream(self._manager.__enter__(), self._session, self._provider)
+        return self._rs
+
+    def _finish(self, error: BaseException | None) -> None:
+        if self._rs is None:
+            return
+        try:
+            self._rs._finish(error)
+        except Exception as e:  # recording must never break the agent's stream
+            print(f"echotrail: record error: {e}", file=sys.stderr)
+
+    def __exit__(self, *exc: Any) -> Any:
+        self._finish(exc[1])
+        return self._manager.__exit__(*exc)
+
+    async def __aenter__(self) -> _RecordingMessageStream:
+        self._rs = _RecordingMessageStream(await self._manager.__aenter__(), self._session, self._provider)
+        return self._rs
+
+    async def __aexit__(self, *exc: Any) -> Any:
+        self._finish(exc[1])
+        return await self._manager.__aexit__(*exc)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._manager, name)
+
+
+class _RecordedStreamCall:
+    """Wraps a `.stream(...)` method: logs the request, records the stream."""
+
+    def __init__(self, inner: Callable, session: Session, provider: str):
+        self._inner, self._session, self._provider = inner, session, provider
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        self._session.log("llm_request", provider=self._provider, streamed=True, request=_safe(kwargs))
+        return _RecordingStreamManager(self._inner(*args, **kwargs), self._session, self._provider)
+
+
 class _RecordedCall:
     """Wraps a `.create(...)` style method (sync or async, streaming or not)."""
 
@@ -219,9 +339,9 @@ class _RecordedCall:
 
 
 class _AttrProxy:
-    """Generic attribute-path proxy that intercepts `create` methods."""
+    """Generic attribute-path proxy that intercepts `create` and `stream` methods."""
 
-    _intercept = ("create",)
+    _intercept = {"create": _RecordedCall, "stream": _RecordedStreamCall}
 
     def __init__(self, target: Any, session: Session, provider: str):
         object.__setattr__(self, "_target", target)
@@ -233,7 +353,7 @@ class _AttrProxy:
         session = object.__getattribute__(self, "_session")
         provider = object.__getattribute__(self, "_provider")
         if name in self._intercept and callable(attr):
-            return _RecordedCall(attr, session, provider)
+            return self._intercept[name](attr, session, provider)
         if callable(attr) and not hasattr(attr, "__self__"):
             return attr
         if not isinstance(attr, (bool, int, float, str, bytes, type(None))) and not callable(attr):

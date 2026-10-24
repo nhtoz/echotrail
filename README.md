@@ -83,11 +83,13 @@ All JSON-RPC traffic is relayed untouched and recorded; injection scanning and c
 ```
 echotrail list                        sessions with integrity status + risk score
 echotrail verify SESSION_ID | --all   verify hash chain + anchors (exit 1 on tamper — CI friendly)
+              [--tsa-ca CA.pem]       also check RFC 3161 token signatures (needs openssl)
 echotrail serve                       replay UI
 echotrail incident SESSION_ID         causal trace: injection origin -> downstream actions
 echotrail export SESSION_ID           self-verifying evidence zip (chain of custody)
 echotrail anchor SESSION_ID           RFC 3161 external timestamp of the chain head
 echotrail otel SESSION_ID             export session as OpenTelemetry spans
+echotrail siem SESSION_ID             ECS (default) or --format ocsf NDJSON for your SIEM
 ```
 
 ### Example: incident trace
@@ -106,14 +108,26 @@ Every link cites the exact token and where it appeared — an investigator can c
 
 ### Example: evidence bundle
 
-`echotrail export` produces `<session>_evidence.zip` containing the trace, a manifest (sha256, verification state, flagged events), and a dependency-free `verify.py`:
+`echotrail export` produces `<session>_evidence.zip` containing the trace, a manifest (sha256, verification state, flagged events), the session's anchor records, and a dependency-free `verify.py`:
 
 ```
-$ python verify.py
+$ python verify.py --tsa-ca freetsa_cacert.pem
 OK: events.jsonl sha256 matches manifest (a3f1c2...)
 OK: hash chain intact across 10 events
+OK: RFC 3161 anchor matches chain head (TSA time 20260718154702Z, serial 157560240)
+OK: TSA signature valid
 EVIDENCE VERIFIED
 ```
+
+Without `--tsa-ca`, the verifier still checks that each RFC 3161 token timestamps exactly the anchored hash (stdlib only); `--tsa-ca` with `openssl` on PATH also checks the TSA's signature. Get the TSA's CA certificate from the TSA itself, not from the bundle.
+
+### SIEM export
+
+`echotrail siem SESSION_ID` writes one NDJSON record per event in Elastic Common Schema 8.11; `--format ocsf` writes OCSF 1.1 API Activity records plus a Detection Finding for every flagged event. Each record carries the event's `seq`, `hash`, `prev_hash`, the session's chain-verification result, and taint links back to the injection origin.
+
+### Cross-language hashing
+
+Event hashes use canonical JSON with ECMAScript number formatting (`2.0` → `2`, `1e-05` → `0.00001`), so a trace written from Node verifies in Python and vice versa, including payloads with floats. Traces written before v0.13 still verify in Python.
 
 ## Threat model
 
@@ -121,6 +135,9 @@ EVIDENCE VERIFIED
 |---|---|
 | Edit/delete/reorder past events | Hash chain breaks at the exact seq — `verify` exit 1 |
 | Rebuild the entire chain after an incident | External RFC 3161 anchor no longer matches |
+| Rebuild the chain *and* edit the anchor record | Token's signed imprint no longer matches the anchored hash |
+| Fabricate a timestamp token | Signature check against the TSA's CA fails (`--tsa-ca`) |
+| Concurrent writers (e.g. MCP proxy threads) | Per-session write lock keeps one linear chain |
 | Dispute what config/model was live | Config snapshot is the first chained event |
 | "The injection didn't cause that action" | Taint links cite the exact introduced token |
 | Tamper with exported evidence | Standalone verifier fails; manifest sha256 mismatch |
