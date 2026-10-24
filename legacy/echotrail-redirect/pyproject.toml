@@ -1,0 +1,24 @@
+[project]
+name = "echotrail"
+version = "0.14.0"
+description = "Renamed to wakeprint. This release installs wakeprint and keeps `import echotrail` working."
+readme = "README.md"
+license = {text = "MIT"}
+authors = [{name = "Nihat Öz", email = "nihatoz@gmail.com"}]
+requires-python = ">=3.10"
+dependencies = ["wakeprint>=0.14.0"]
+classifiers = ["Development Status :: 7 - Inactive"]
+
+[project.urls]
+Homepage = "https://github.com/nhtoz/wakeprint"
+Repository = "https://github.com/nhtoz/wakeprint"
+
+[project.scripts]
+echotrail = "echotrail._cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["echotrail"]
