@@ -3,6 +3,7 @@ name: publish
 # Trusted Publishing (no API tokens). Each PyPI project lists this repo,
 # workflow file and the `pypi` environment as a trusted publisher.
 # Versions already on PyPI are skipped, so re-running is safe.
+# Afterwards the e2e job installs the release from PyPI and tests it.
 on:
   workflow_dispatch:
   release:
@@ -59,3 +60,47 @@ jobs:
       - uses: pypa/gh-action-pypi-publish@release/v1
         with:
           skip-existing: true
+
+  # Installs the version just published from PyPI on clean runners and runs
+  # the end-to-end suite against it (see e2e/README.md).
+  e2e:
+    needs: publish-echotrail
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python-version: ["3.12", "3.14"]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Build the Node SDK (for E17)
+        working-directory: js
+        run: npm install && npm run build
+      - name: Install the published version from PyPI
+        run: |
+          VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml)
+          echo "WAKEPRINT_EXPECTED=$VERSION" >> "$GITHUB_ENV"
+          python -m venv "$RUNNER_TEMP/e2e-venv"
+          PY="$RUNNER_TEMP/e2e-venv/bin/python"
+          [ -x "$PY" ] || PY="$RUNNER_TEMP/e2e-venv/Scripts/python.exe"
+          echo "E2E_PY=$PY" >> "$GITHUB_ENV"
+          # PyPI's index can lag a fresh upload by a minute or two
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            "$PY" -m pip install --no-cache-dir "wakeprint[anchor,otel]==$VERSION" anthropic openai mcp httpx pytest && break
+            sleep 30
+          done
+          "$PY" -c "import wakeprint; assert wakeprint.__version__ == '$VERSION', wakeprint.__version__"
+      - name: Run the end-to-end suite
+        working-directory: e2e
+        env:
+          WAKEPRINT_NODE_SDK: ${{ github.workspace }}/js/build/src/index.js
+        run: '"$E2E_PY" -m pytest -v -rs'

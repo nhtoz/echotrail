@@ -162,9 +162,11 @@ MCP client ── mcp-proxy ────┘        │
 ## Tests
 
 ```bash
-pytest tests/   # 19 tests: chain integrity, tamper/forgery detection, causal
-                # tracing, MCP proxy end-to-end, async/streaming, OTel export
+pytest          # 46 unit tests: chain integrity, tamper/forgery detection, causal
+                # tracing, anchors, SIEM/OTel export, MCP proxy, async/streaming
 ```
+
+[`e2e/`](e2e/README.md) tests the release as published on PyPI: 17 scenarios with real Anthropic, OpenAI and MCP agents, live RFC 3161 anchoring and offline evidence checks. It runs automatically after every publish.
 
 ## Roadmap
 

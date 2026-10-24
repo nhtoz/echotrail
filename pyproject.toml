@@ -26,3 +26,7 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["wakeprint*"]
+
+[tool.pytest.ini_options]
+# e2e/ tests the PyPI release and needs extra packages; run it from e2e/
+testpaths = ["tests"]
